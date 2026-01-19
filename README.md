@@ -24,6 +24,10 @@
 
 </div>
 
+## Something New
+
+This fork of Jujutsu add CDC support to large binary files.
+
 ## Introduction
 
 Jujutsu is a powerful [version control system](https://en.wikipedia.org/wiki/Version_control)

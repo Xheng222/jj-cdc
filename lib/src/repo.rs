@@ -436,12 +436,20 @@ impl Default for StoreFactories {
             Box::new(|_settings, store_path| Ok(Box::new(SimpleBackend::load(store_path)))),
         );
         #[cfg(feature = "git")]
+        // factories.add_backend(
+        //     crate::git_backend::GitBackend::name(),
+        //     Box::new(|settings, store_path| {
+        //         Ok(Box::new(crate::git_backend::GitBackend::load(
+        //             settings, store_path,
+        //         )?))
+        //     }),
+        // );
         factories.add_backend(
-            crate::git_backend::GitBackend::name(),
+            crate::cdc::backend_wrapper::CdcBackendWrapper::name(),
             Box::new(|settings, store_path| {
-                Ok(Box::new(crate::git_backend::GitBackend::load(
-                    settings, store_path,
-                )?))
+                Ok(Box::new(
+                    crate::cdc::backend_wrapper::CdcBackendWrapper::load(settings, store_path)?,
+                ))
             }),
         );
         #[cfg(feature = "testing")]

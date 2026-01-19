@@ -11,8 +11,8 @@
 "conflict_description" = "yellow"
 "conflict_description difficult" = "red"
 
-"commit_id" = "blue"
-"change_id" = "magenta"
+"commit_id" = "bright blue"
+"change_id" = "bright magenta"
 
 # Unique prefixes and the rest for change & commit ids
 "prefix" = { bold = true }
@@ -47,18 +47,18 @@
 "root" = "green"
 
 "working_copy" = { bold = true }
-"working_copy commit_id" = "bright blue"
-"working_copy change_id" = "bright magenta"
+"working_copy commit_id" = "blue"
+"working_copy change_id" = "magenta"
 # We do not use bright yellow because of how it looks on xterm's default theme.
 # https://github.com/jj-vcs/jj/issues/528
 "working_copy author" = "yellow"
 "working_copy committer" = "yellow"
 "working_copy timestamp" = "bright cyan"
 "working_copy working_copies" = "bright green"
-"working_copy bookmark" = "bright magenta"
-"working_copy bookmarks" = "bright magenta"
-"working_copy local_bookmarks" = "bright magenta"
-"working_copy remote_bookmarks" = "bright magenta"
+"working_copy bookmark" = "magenta"
+"working_copy bookmarks" = "magenta"
+"working_copy local_bookmarks" = "magenta"
+"working_copy remote_bookmarks" = "magenta"
 "working_copy tag" = "bright magenta"
 "working_copy tags" = "bright magenta"
 "working_copy git_ref" = "bright green"

@@ -13,8 +13,8 @@ use crate::ui::OutputGuard;
 use crate::ui::ProgressOutput;
 use crate::ui::Ui;
 
-pub const UPDATE_HZ: u32 = 30;
-pub const INITIAL_DELAY: Duration = Duration::from_millis(250);
+pub const UPDATE_HZ: u32 = 10;
+pub const INITIAL_DELAY: Duration = Duration::from_millis(0);
 
 struct Progress<'a> {
     prefix: &'a str,

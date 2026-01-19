@@ -389,7 +389,18 @@ pub struct UnexpectedGitBackendError;
 
 /// Returns the underlying `GitBackend` implementation.
 pub fn get_git_backend(store: &Store) -> Result<&GitBackend, UnexpectedGitBackendError> {
-    store.backend_impl().ok_or(UnexpectedGitBackendError)
+    // store.backend_impl().ok_or(UnexpectedGitBackendError)
+    // 尝试获取 CdcBackendWrapper 并返回其内部的 GitBackend
+    if let Some(wrapper) = store.backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>() {
+        return Ok(wrapper.inner());
+    }
+
+    // 直接获取 GitBackend
+    if let Some(backend) = store.backend_impl::<GitBackend>() {
+        return Ok(backend);
+    }
+
+    Err(UnexpectedGitBackendError)
 }
 
 /// Returns new thread-local instance to access to the underlying Git repo.
@@ -2185,7 +2196,7 @@ pub fn remove_remote(
         return Err(GitRemoteManagementError::NoSuchRemote(
             remote_name.to_owned(),
         ));
-    }
+    };
 
     let mut config = git_repo.config_snapshot().clone();
     remove_remote_git_branch_config_sections(&mut config, remote_name)?;
