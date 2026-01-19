@@ -18,6 +18,8 @@
 #![deny(unused_must_use)]
 #![deny(unsafe_code)]
 
+pub mod cdc;
+
 pub mod absorb;
 pub mod annotate;
 pub use jj_core::backend;

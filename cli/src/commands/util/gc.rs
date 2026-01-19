@@ -56,7 +56,8 @@ pub async fn cmd_util_gc(
         Some("now") => SystemTime::now() - Duration::ZERO,
         _ => return Err(user_error("--expire only accepts 'now'")),
     };
-    let workspace_command = command.workspace_helper(ui).await?;
+    // 不 snapshot 工作目录，因为 gc 操作不会修改工作目录，同时避免因为文件锁导致无法 gc 存放于 smb 上的仓库
+    let workspace_command = command.workspace_helper_no_snapshot(ui).await?;
 
     let repo = workspace_command.repo();
     repo.op_store()
@@ -65,6 +66,9 @@ pub async fn cmd_util_gc(
     #[cfg(feature = "git")]
     if let Ok(git_backend) = jj_lib::git::get_git_backend(repo.store()) {
         git_backend.gc(repo.index(), keep_newer)?;
+        if let Ok(cdc_backend) = jj_lib::cdc::backend_wrapper::get_cdc_backend(repo.store()) {
+            cdc_backend.gc()?;
+        }
     }
     Ok(())
 }

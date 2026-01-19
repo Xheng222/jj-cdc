@@ -34,6 +34,7 @@ clru = { workspace = true }
 digest = { workspace = true }
 dunce = { workspace = true }
 either = { workspace = true }
+fastcdc = "3.2.1"
 futures = { workspace = true }
 gix = { workspace = true, optional = true }
 gix-ignore = { workspace = true }
@@ -45,6 +46,8 @@ jj-core = { workspace = true }
 jj-dsl = { workspace = true }
 maplit = { workspace = true }
 memchr = { workspace = true }
+memmap2 = "0.9.9"
+mincdc = "0.1.0"
 once_cell = { workspace = true }
 pollster = { workspace = true }
 prost = { workspace = true }
