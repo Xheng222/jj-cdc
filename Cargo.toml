@@ -171,7 +171,6 @@ redundant_imports = "warn"
 # Insta suggests compiling these packages in opt mode for faster testing.
 # See https://docs.rs/insta/latest/insta/#optional-faster-runs.
 insta.opt-level = 3
-similar.opt-level = 3
 # Proptest suggests compiling itself and its RNG in opt mode as well.
 # See https://proptest-rs.github.io/proptest/proptest/tips-and-best-practices.html#setting-opt-level
 proptest.opt-level = 3
@@ -181,3 +180,5 @@ rand_chacha.opt-level = 3
 [profile.release]
 strip = "debuginfo"
 codegen-units = 1
+lto = "fat"
+opt-level=3
