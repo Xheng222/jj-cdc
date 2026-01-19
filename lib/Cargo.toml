@@ -39,6 +39,7 @@ digest = { workspace = true }
 dunce = { workspace = true }
 either = { workspace = true }
 etcetera = { workspace = true }
+fastcdc = "3.2.1"
 futures = { workspace = true }
 gix = { workspace = true, optional = true }
 globset = { workspace = true }
@@ -49,6 +50,8 @@ interim = { workspace = true }
 itertools = { workspace = true }
 jj-lib-proc-macros = { workspace = true }
 maplit = { workspace = true }
+memmap2 = "0.9.9"
+mincdc = "0.1.0"
 once_cell = { workspace = true }
 pest = { workspace = true }
 pest_derive = { workspace = true }
