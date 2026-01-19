@@ -4251,7 +4251,7 @@ impl<'a> CliRunner<'a> {
     pub fn init() -> Self {
         let tracing_subscription = TracingSubscription::init();
         crate::cleanup_guard::init();
-        Self {
+        let bind = Self {
             tracing_subscription,
             app: crate::commands::default_app(),
             config_layers: crate::config::default_config_layers(),
@@ -4265,7 +4265,8 @@ impl<'a> CliRunner<'a> {
             dispatch: Box::new(AsyncCliDispatchFn(crate::commands::run_command)),
             dispatch_hooks: vec![],
             process_global_args_fns: vec![],
-        }
+        };
+        bind.version(env!("JJ_VERSION"))
     }
 
     /// Set the name of the CLI application to be displayed in help messages.
