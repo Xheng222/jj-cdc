@@ -55,7 +55,7 @@ use rayon::prelude::ParallelIterator as _;
 use tempfile::NamedTempFile;
 use thiserror::Error;
 use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt as _;
+use tokio::io::AsyncReadExt;
 use tracing::instrument;
 use tracing::trace_span;
 
@@ -1496,7 +1496,7 @@ impl FileSnapshotter<'_> {
             match body(scope) {
                 Ok(()) => {}
                 Err(err) => self.error.set(err).unwrap_or(()),
-            }
+            };
         });
     }
 
@@ -1948,20 +1948,40 @@ impl FileSnapshotter<'_> {
         path: &RepoPath,
         disk_path: &Path,
     ) -> Result<FileId, SnapshotError> {
-        let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
+        let mut file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
         })?;
-        let mut contents = self
-            .tree_state
-            .target_eol_strategy
-            .convert_eol_for_snapshot(BlockingAsyncReader::new(file))
-            .await
-            .map_err(|err| SnapshotError::Other {
-                message: "Failed to convert the EOL".to_string(),
-                err: err.into(),
-            })?;
-        Ok(self.store().write_file(path, &mut contents).await?)
+
+        if let Some(cdc_backend_wrapper) =
+            self.store()
+                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
+            && crate::cdc::cdc_manager::CdcMagager::is_binary_file(&mut file)
+        {
+            // tracing::debug!("write file to cdc {:?}", disk_path.display());
+            // let start_time = std::time::Instant::now();
+            let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
+            // let end_time = std::time::Instant::now();
+            // eprintln!("after write file to store {:?}, time: {:?}", disk_path.display(), end_time.duration_since(start_time));
+            let result = Ok(self
+                .store()
+                .write_file(path, &mut std::io::Cursor::new(pointer_content))
+                .await?);
+
+            result
+        } else {
+            let mut contents = self
+                .tree_state
+                .target_eol_strategy
+                .convert_eol_for_snapshot(BlockingAsyncReader::new(file))
+                .await
+                .map_err(|err| SnapshotError::Other {
+                    message: "Failed to convert the EOL".to_string(),
+                    err: err.into(),
+                })?;
+
+            Ok(self.store().write_file(path, &mut contents).await?)
+        }
     }
 
     async fn write_symlink_to_store(
@@ -2018,7 +2038,9 @@ impl TreeState {
                 message: format!("Failed to open file {} for writing", disk_path.display()),
                 err: err.into(),
             })?;
-        let contents = if apply_eol_conversion {
+
+        // 先进行 EOL 转换（如果需要）
+        let mut contents = if apply_eol_conversion {
             self.target_eol_strategy
                 .convert_eol_for_update(contents)
                 .await
@@ -2029,15 +2051,57 @@ impl TreeState {
         } else {
             Box::new(contents)
         };
-        let size = copy_async_to_sync(contents, &mut file)
-            .await
-            .map_err(|err| CheckoutError::Other {
-                message: format!(
-                    "Failed to write the content to the file {}",
-                    disk_path.display()
-                ),
-                err: err.into(),
-            })?;
+
+        // 尝试解析 CDC 指针
+        use crate::cdc::pointer::{CdcPointer, TryParseResult};
+
+        let size = if let Some(cdc_wrapper) =
+            self.store
+                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
+        {
+            match CdcPointer::try_parse(&mut contents).await {
+                Ok(TryParseResult::Parsed(pointer)) => {
+                    let size = cdc_wrapper
+                        .read_file_from_cdc(&pointer, &mut file)
+                        .await
+                        .map_err(|err| CheckoutError::Other {
+                            message: format!("Failed to read file from CDC: {:?}", err),
+                            err: err.into(),
+                        })?;
+                    size
+                }
+                Ok(TryParseResult::NotCdcPointer(consumed_bytes)) => {
+                    let consumed_bytes = std::io::Cursor::new(consumed_bytes);
+                    let contents = tokio::io::AsyncReadExt::chain(consumed_bytes, contents);
+                    copy_async_to_sync(contents, &mut file)
+                        .await
+                        .map_err(|err| CheckoutError::Other {
+                            message: format!(
+                                "Failed to write the content to the file {}",
+                                disk_path.display()
+                            ),
+                            err: err.into(),
+                        })?
+                }
+                Err(e) => {
+                    return Err(CheckoutError::Other {
+                        message: format!("Failed to parse CDC pointer for {}", disk_path.display()),
+                        err: e.into(),
+                    });
+                }
+            }
+        } else {
+            copy_async_to_sync(contents, &mut file)
+                .await
+                .map_err(|err| CheckoutError::Other {
+                    message: format!(
+                        "Failed to write the content to the file {}",
+                        disk_path.display()
+                    ),
+                    err: err.into(),
+                })?
+        };
+
         set_executable(exec_bit, disk_path)
             .map_err(|err| checkout_error_for_stat_error(err, disk_path))?;
         // Read the file state from the file descriptor. That way, know that the file
@@ -2314,26 +2378,130 @@ impl TreeState {
                     panic!("unexpected tree entry in diff at {path:?}");
                 }
                 MaterializedTreeValue::FileConflict(file) => {
-                    let conflict_marker_len =
-                        choose_materialized_conflict_marker_len(&file.contents);
-                    let options = ConflictMaterializeOptions {
-                        marker_style: self.conflict_marker_style,
-                        marker_len: Some(conflict_marker_len),
-                        merge: self.store.merge_options().clone(),
-                    };
-                    let exec_bit = ExecBit::new_from_repo(
-                        file.executable.unwrap_or(false),
-                        self.exec_policy,
-                        get_prev_exec,
-                    );
-                    let contents =
-                        materialize_merge_result_to_bytes(&file.contents, &file.labels, &options);
-                    let mut file_state =
-                        self.write_conflict(&disk_path, &contents, exec_bit).await?;
-                    file_state.materialized_conflict_data = Some(MaterializedConflictData {
-                        conflict_marker_len: conflict_marker_len.try_into().unwrap_or(u32::MAX),
-                    });
-                    file_state
+                    use crate::cdc::backend_wrapper::CdcBackendWrapper;
+                    use crate::cdc::pointer::{CdcPointer, TryParseResult};
+                    if let Some(cdc_wrapper) = self.store.backend_impl::<CdcBackendWrapper>()
+                        && file
+                            .contents
+                            .iter()
+                            .any(|add| CdcPointer::is_cdc_pointer(add))
+                    {
+                        let base_name = disk_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file");
+                        let parent = disk_path.parent().unwrap();
+
+                        // 模型：
+                        // - add[0] 分支 1；add[1] 分支 2；add[2] 分支 3；
+                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3 的共同祖先；
+                        for (i, add) in file.contents.adds().enumerate() {
+                            let version_path =
+                                parent.join(format!("conflict-{}-{}", i + 1, base_name));
+                            let mut file = File::create(&version_path).map_err(|err| {
+                                CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to create file {}: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                }
+                            })?;
+                            let mut cursor = std::io::Cursor::new(add);
+                            let pointer = CdcPointer::try_parse(&mut cursor).await.unwrap();
+                            if let TryParseResult::Parsed(pointer) = pointer {
+                                let _size =
+                                    cdc_wrapper.read_file_from_cdc(&pointer, &mut file).await?;
+                            } else {
+                                return Err(CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to parse CDC pointer for {}",
+                                        version_path.display()
+                                    ),
+                                    err: Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        "Failed to parse CDC pointer",
+                                    )),
+                                });
+                            }
+                        }
+
+                        let mut base_conetents = HashMap::new();
+                        for (i, remove) in file.contents.removes().enumerate() {
+                            let base_contents = base_conetents.entry(remove).or_insert(Vec::new());
+                            base_contents.push(i + 1);
+                        }
+
+                        for (base_contents, versions) in base_conetents {
+                            let mut version = String::new();
+                            let mut last = 0;
+                            for i in versions {
+                                if i == last {
+                                    version.push_str(&format!("-{}", i + 1));
+                                } else {
+                                    version.push_str(&format!("-{}-{}", i, i + 1));
+                                }
+                                last = i + 1;
+                            }
+
+                            let version_path =
+                                parent.join(format!("base{}-{}", version, base_name));
+                            let mut file = File::create(&version_path).map_err(|err| {
+                                CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to create file {}: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                }
+                            })?;
+                            let mut cursor = std::io::Cursor::new(base_contents);
+                            let pointer = CdcPointer::try_parse(&mut cursor).await.unwrap();
+                            if let TryParseResult::Parsed(pointer) = pointer {
+                                let _size =
+                                    cdc_wrapper.read_file_from_cdc(&pointer, &mut file).await?;
+                            } else {
+                                return Err(CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to parse CDC pointer for {}",
+                                        version_path.display()
+                                    ),
+                                    err: Box::new(std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        "Failed to parse CDC pointer",
+                                    )),
+                                });
+                            }
+                        }
+
+                        FileState::placeholder()
+                    } else {
+                        let conflict_marker_len =
+                            choose_materialized_conflict_marker_len(&file.contents);
+                        let options = ConflictMaterializeOptions {
+                            marker_style: self.conflict_marker_style,
+                            marker_len: Some(conflict_marker_len),
+                            merge: self.store.merge_options().clone(),
+                        };
+                        let exec_bit = ExecBit::new_from_repo(
+                            file.executable.unwrap_or(false),
+                            self.exec_policy,
+                            get_prev_exec,
+                        );
+                        let contents = materialize_merge_result_to_bytes(
+                            &file.contents,
+                            &file.labels,
+                            &options,
+                        );
+                        let mut file_state =
+                            self.write_conflict(&disk_path, &contents, exec_bit).await?;
+                        file_state.materialized_conflict_data = Some(MaterializedConflictData {
+                            conflict_marker_len: conflict_marker_len.try_into().unwrap_or(u32::MAX),
+                        });
+                        file_state
+                    }
                 }
                 MaterializedTreeValue::OtherConflict { id, labels } => {
                     // Unless all terms are regular files, we can't do much
