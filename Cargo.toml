@@ -180,3 +180,5 @@ opt-level = 3
 [profile.release]
 strip = "debuginfo"
 codegen-units = 1
+lto = "fat"
+opt-level=3
