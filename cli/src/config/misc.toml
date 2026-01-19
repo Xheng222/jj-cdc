@@ -5,8 +5,11 @@
 # in the first line of the relevant commands' help text.
 b = ["bookmark"]
 ci = ["commit"]
-desc = ["describe"]
+ds = ["describe"]
 st = ["status"]
+ab = ["abandon"]
+ws = ["workspace"]
+init = ["git", "init"]
 
 [diff.color-words]
 conflict = "materialize"
@@ -21,7 +24,7 @@ enabled-branches = []
 disabled-branches = []
 
 [git]
-colocate = true
+colocate = false
 private-commits = "none()"
 push-new-bookmarks = false
 sign-on-push = false
@@ -45,6 +48,7 @@ bookmark-list-sort-keys = ["name"]
 tag-list-sort-keys = ["name"]
 # TODO: delete revsets-use-glob-by-default in jj 0.43+
 revsets-use-glob-by-default = true
+default-command = "log"
 
 [ui.movement]
 edit = false
@@ -55,7 +59,7 @@ wrapping = "anywhere"
 show-ruler = true
 
 [snapshot]
-max-new-file-size = "1MiB"
+max-new-file-size = "100MiB"
 auto-track = "all()"
 auto-update-stale = false
 
