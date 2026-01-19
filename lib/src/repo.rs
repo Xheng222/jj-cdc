@@ -437,14 +437,24 @@ impl Default for StoreFactories {
             }),
         );
         #[cfg(feature = "git")]
+        // factories.add_backend(
+        //     crate::git_backend::GitBackend::name(),
+        //     Box::new(|settings, store_path| {
+        //         Ok(Box::new(crate::git_backend::GitBackend::load(
+        //             settings, store_path,
+        //         )?))
+        //     }),
+        // );
         factories.add_backend(
-            crate::git_backend::GitBackend::name(),
+            crate::cdc::backend_wrapper::CdcBackendWrapper::name(),
             Box::new(|settings, store_path, workspace_root| {
-                Ok(Box::new(crate::git_backend::GitBackend::load_at_workspace(
-                    settings,
-                    store_path,
-                    workspace_root,
-                )?))
+                Ok(Box::new(
+                    crate::cdc::backend_wrapper::CdcBackendWrapper::load_at_workspace(
+                        settings,
+                        store_path,
+                        workspace_root
+                    )?,
+                ))
             }),
         );
         #[cfg(feature = "testing")]

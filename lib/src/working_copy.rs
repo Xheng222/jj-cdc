@@ -203,6 +203,10 @@ pub enum SnapshotError {
         #[source]
         err: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// CDC error.
+    #[error(transparent)]
+    CdcError(#[from] crate::cdc::cdc_error::CdcError),
 }
 
 /// Options used when snapshotting the working copy. Some of them may be ignored
@@ -312,6 +316,10 @@ pub enum CheckoutError {
         #[source]
         err: Box<dyn std::error::Error + Send + Sync>,
     },
+
+    /// CDC error.
+    #[error(transparent)]
+    CdcError(#[from] crate::cdc::cdc_error::CdcError),
 }
 
 /// An error while resetting the working copy.
