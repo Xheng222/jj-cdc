@@ -37,10 +37,6 @@ impl CdcMagager {
             Ok(n) => n,
             Err(_) => return false,
         };
-        // 如果读取失败，则认为是二进制文件
-        if n == 0 {
-            return true;
-        }
 
         // 重置文件指针到开头
         match file.seek(std::io::SeekFrom::Start(0)) {
