@@ -298,6 +298,10 @@ async fn cmd_git_colocation_disable(
         reload_workspace_helper(ui, command, &workspace_root, &settings, &op_id).await?;
     remove_git_head(ui, &mut workspace_command).await?;
 
+    let mut tx = workspace_command.start_transaction();
+    tx.repo_mut().remove_local_git();
+    tx.finish(ui, "remove git-tracking bookmark").await?;
+
     writeln!(
         ui.status(),
         "Workspace successfully converted into a non-colocated Jujutsu/Git workspace."
