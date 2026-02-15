@@ -262,6 +262,10 @@ fn cmd_git_colocation_disable(
     // And finally, remove the git HEAD reference
     remove_git_head(ui, &mut workspace_command)?;
 
+    let mut tx = workspace_command.start_transaction();
+    tx.repo_mut().remove_local_git();
+    tx.finish(ui, "remove git-tracking bookmark")?;
+
     writeln!(
         ui.status(),
         "Workspace successfully converted into a non-colocated Jujutsu/Git workspace."

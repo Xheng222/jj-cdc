@@ -1744,6 +1744,11 @@ impl MutableRepo {
         self.view_mut().set_remote_bookmark(symbol, remote_ref);
     }
 
+    pub fn remove_local_git(&mut self) {
+        self.view_mut()
+            .remove_remote(crate::git::REMOTE_NAME_FOR_LOCAL_GIT_REPO);
+    }
+
     fn merge_remote_bookmark(
         &mut self,
         symbol: RemoteRefSymbol<'_>,
