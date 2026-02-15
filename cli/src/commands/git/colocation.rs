@@ -172,6 +172,8 @@ fn cmd_git_colocation_enable(
     let git_target_path = jj_repo_path.join("store").join("git_target");
     let dot_git_path = workspace_root.join(".git");
 
+    drop(workspace_command);
+
     // Move the git repository from .jj/repo/store/git to .git
     std::fs::rename(&git_store_path, &dot_git_path).map_err(|err| match err.kind() {
         ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty => {
@@ -191,6 +193,7 @@ fn cmd_git_colocation_enable(
     set_git_repo_bare(&dot_git_path, false)?;
 
     // Reload the workspace command helper to ensure it picks up the changes
+    let workspace_command = command.workspace_helper_no_snapshot(ui)?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command)?;
 
     // Add a .jj/.gitignore file (if needed) to ensure that the colocated Git
@@ -235,6 +238,8 @@ fn cmd_git_colocation_disable(
     let dot_git_path = workspace_root.join(".git");
     let jj_gitignore_path = dot_jj_path.join(".gitignore");
 
+    drop(workspace_command);
+
     // Move the Git repository from .git into .jj/repo/store/git
     std::fs::rename(&dot_git_path, &git_store_path).map_err(|e| {
         user_error_with_message("Failed to move Git repository to .jj/repo/store/git", e)
@@ -251,6 +256,7 @@ fn cmd_git_colocation_disable(
     std::fs::remove_file(&jj_gitignore_path).ok();
 
     // Reload the workspace command helper to ensure it picks up the changes
+    let workspace_command = command.workspace_helper_no_snapshot(ui)?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command)?;
 
     // And finally, remove the git HEAD reference
