@@ -4,9 +4,9 @@ use std::{
     io::{BufWriter, Write},
     ops::Deref,
     path::PathBuf,
-    sync::{self, Arc},
 };
 
+use async_trait::async_trait;
 use fastcdc::v2020::FastCDC;
 
 use crate::cdc::{
@@ -14,8 +14,8 @@ use crate::cdc::{
         BUFFER_SIZE, CHUNK_AVG_SIZE, HASH_LENGTH, PACKS_DIR, SUPER_CHUNK_SIZE_MAX,
         SUPER_CHUNK_SIZE_MIN,
     },
-    cdc_error::{CdcError, CdcResult},
-    chunk_backend::{ChunkBackend, PendingCdcChunk, hashmap_backend::HashMapChunkBackend},
+    cdc_error::CdcResult,
+    chunk_backend::{ChunkBackend, HashMapChunkBackend, PendingCdcChunk},
     manifest_backend::{CdcManifest, GitManifestBackend, ManifestBackend},
     pointer::{CdcPointer, CdcPointerBytes},
     utils::calculate_hash,
@@ -24,16 +24,16 @@ use crate::cdc::{
 use memmap2::Mmap;
 use rayon::iter::{IntoParallelRefIterator, ParallelDrainRange, ParallelIterator};
 
-pub trait StoreBackend: Send + Sync {
-    fn write_file(&self, file: File) -> CdcResult<CdcPointerBytes>;
-    fn load_file(&self, pointer: &CdcPointer, file: &File) -> CdcResult<usize>;
+#[async_trait]
+pub trait CdcStoreBackend: Send + Sync {
+    async fn write_file(&self, file: File) -> CdcResult<CdcPointerBytes>;
+    async fn read_file(&self, pointer: &CdcPointer, file: &File) -> CdcResult<usize>;
     fn gc(&self, keep_manifests: Vec<CdcPointer>) -> CdcResult<()>;
 }
 
 pub struct ChunkStoreBackend {
-    chunk_backend: Arc<std::sync::Mutex<Box<dyn ChunkBackend>>>,
-    manifest_backend: Arc<std::sync::Mutex<Box<dyn ManifestBackend>>>,
-    cdc_pool: rayon::ThreadPool,
+    chunk_backend: Box<dyn ChunkBackend>,
+    manifest_backend: Box<dyn ManifestBackend>,
 }
 
 struct LastRead {
@@ -48,28 +48,22 @@ impl ChunkStoreBackend {
         if !pack_dir.exists() {
             std::fs::create_dir_all(&pack_dir)?;
         }
-        // let chunk_backend = RedbChunkBackend::new(store_path)?;
+
         let chunk_backend = HashMapChunkBackend::new(store_path)?;
         let manifest_backend = GitManifestBackend::new(store_path)?;
 
-        let pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|i| format!("cdc-{}", i))
-            .build()
-            .unwrap();
         Ok(Self {
-            chunk_backend: Arc::new(std::sync::Mutex::new(Box::new(chunk_backend))),
-            manifest_backend: Arc::new(std::sync::Mutex::new(Box::new(manifest_backend))),
-            cdc_pool: pool,
+            chunk_backend: Box::new(chunk_backend),
+            manifest_backend: Box::new(manifest_backend),
         })
     }
+}
 
+#[async_trait]
+impl CdcStoreBackend for ChunkStoreBackend {
     #[allow(unsafe_code)]
-    fn _write_file(
-        file: &File,
-        chunk_backend: &mut Box<dyn ChunkBackend>,
-        manifest_backend: &mut Box<dyn ManifestBackend>,
-    ) -> CdcResult<CdcPointerBytes> {
-        let mmap = unsafe { memmap2::MmapOptions::new().map(file).unwrap() };
+    async fn write_file(&self, file: File) -> CdcResult<CdcPointerBytes> {
+        let mmap = unsafe { memmap2::MmapOptions::new().map(&file).unwrap() };
 
         let mut manifest: CdcManifest = Vec::new();
 
@@ -115,39 +109,21 @@ impl ChunkStoreBackend {
                     }
                 })
                 .collect::<Vec<PendingCdcChunk>>();
-            for pending_chunk in pending_chunks {
+
+            for pending_chunk in pending_chunks.iter() {
                 manifest.push(pending_chunk.hash);
-                chunk_backend.write_chunk_with_index(pending_chunk)?;
             }
+            self.chunk_backend.write_chunks(pending_chunks)?;
         }
-        let pointer = manifest_backend.write_manifest(manifest)?;
-        chunk_backend.sync_writer()?;
+
+        let pointer = self.manifest_backend.write_manifest(manifest)?;
+        self.chunk_backend.wait_for_write_finished()?;
         Ok(pointer)
     }
-}
 
-impl StoreBackend for ChunkStoreBackend {
-
-    fn write_file(&self, file: File) -> CdcResult<CdcPointerBytes> {
-        let chunk_backend = self.chunk_backend.clone();
-        let manifest_backend = self.manifest_backend.clone();
-        let (tx, rx) = sync::mpsc::sync_channel(0);
-
-        self.cdc_pool.spawn(move || {
-            let mut chunk_backend = chunk_backend.lock().unwrap();
-            let mut manifest_backend = manifest_backend.lock().unwrap();
-
-            let pointer = Self::_write_file(&file, &mut chunk_backend, &mut manifest_backend);
-            tx.send(pointer).unwrap();
-        });
-
-        rx.recv()?
-    }
-
-    fn load_file(&self, pointer: &CdcPointer, file: &File) -> CdcResult<usize> {
-        let manifest_backend = self.manifest_backend.lock().unwrap();
-        let chunk_backend = self.chunk_backend.lock().unwrap();
-        let manifest = manifest_backend.read_manifest(pointer)?;
+    async fn read_file(&self, pointer: &CdcPointer, file: &File) -> CdcResult<usize> {
+        let manifest = self.manifest_backend.read_manifest(pointer)?;
+        tracing::debug!("Manifest read: {:?} chunks", manifest);
 
         file.set_len(0)?;
         let mut output_writer = BufWriter::with_capacity(BUFFER_SIZE, file);
@@ -160,16 +136,14 @@ impl StoreBackend for ChunkStoreBackend {
         };
 
         let mut file_size = 0usize;
-        for hash in manifest {
-            let location = match chunk_backend.read_index(&hash)? {
-                Some(location) => location,
-                None => return Err(CdcError::MissingChunk { hash: hash }),
-            };
+        let locations = self.chunk_backend.read_chunk_location(manifest)?;
+        tracing::debug!("locations read: {:?} chunks", locations);
 
+        for location in locations {
             if !file_cache.contains_key(&location.pack_id) {
                 file_cache.insert(
                     location.pack_id,
-                    chunk_backend.read_chunk_file_mmap(location.pack_id)?,
+                    self.chunk_backend.read_chunk_file_mmap(location.pack_id)?,
                 );
             }
 
@@ -224,20 +198,16 @@ impl StoreBackend for ChunkStoreBackend {
     }
 
     fn gc(&self, keep_manifests: Vec<CdcPointer>) -> CdcResult<()> {
-        let mut manifest_backend = self.manifest_backend.lock().unwrap();
-        let mut chunk_backend = self.chunk_backend.lock().unwrap();
-
-
         {
             let mut keep_chunks_hash = HashSet::new();
             for manifest in &keep_manifests {
-                let manifest = manifest_backend.read_manifest(manifest)?;
+                let manifest = self.manifest_backend.read_manifest(manifest)?;
                 keep_chunks_hash.extend(manifest);
             }
-            chunk_backend.gc(keep_chunks_hash)?;
+            self.chunk_backend.gc(keep_chunks_hash)?;
         }
 
-        manifest_backend.gc(&keep_manifests)?;
+        self.manifest_backend.gc(&keep_manifests)?;
         Ok(())
     }
 }

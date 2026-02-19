@@ -1,9 +1,15 @@
 #![expect(missing_docs)]
 
-use std::{fs::File, path::Path, pin::Pin, time::SystemTime};
+use std::{
+    fs::File,
+    path::{Path, PathBuf},
+    pin::Pin,
+    time::SystemTime,
+};
 
 use futures::stream::BoxStream;
 use gix::objs::FindHeader;
+use once_cell::sync::OnceCell;
 use tokio::io::AsyncRead;
 
 use crate::{
@@ -12,8 +18,10 @@ use crate::{
         CopyRecord, FileId, SigningFn, SymlinkId, Tree, TreeId,
     },
     cdc::{
-        cdc_config::CDC_POINTER_SIZE, cdc_error::CdcResult, cdc_manager::CdcMagager,
+        cdc_config::CDC_POINTER_SIZE,
+        cdc_error::CdcResult,
         pointer::CdcPointer,
+        store_backend::{CdcStoreBackend, ChunkStoreBackend},
     },
     git_backend::{GitBackend, GitBackendLoadError},
     index::Index,
@@ -23,10 +31,11 @@ use crate::{
 
 /// CDC backend wrapper
 pub struct CdcBackendWrapper {
-    /// The underlying backend
-    inner: GitBackend,
-    /// The CDC manager
-    cdc_manager: tokio::sync::Mutex<CdcMagager>,
+    /// git backend
+    git_backend: GitBackend,
+    /// cdc backend
+    cdc_path: PathBuf,
+    cdc_backend: OnceCell<Box<dyn CdcStoreBackend>>,
 }
 
 impl CdcBackendWrapper {
@@ -38,23 +47,29 @@ impl CdcBackendWrapper {
         settings: &UserSettings,
         store_path: &Path,
     ) -> Result<Self, Box<GitBackendLoadError>> {
-        let inner = GitBackend::load(settings, store_path)?;
+        let git_backend = GitBackend::load(settings, store_path)?;
+        let cdc_path = store_path.join("cdc");
 
         Ok(Self {
-            inner,
-            cdc_manager: tokio::sync::Mutex::new(CdcMagager::new(
-                store_path.to_path_buf().join("cdc"),
-            )),
+            git_backend: git_backend,
+            cdc_path: cdc_path,
+            cdc_backend: OnceCell::new(),
         })
     }
 
     pub fn inner(&self) -> &GitBackend {
-        &self.inner
+        &self.git_backend
+    }
+
+    fn get_store_backend(&self) -> CdcResult<&Box<dyn CdcStoreBackend>> {
+        self.cdc_backend.get_or_try_init(|| {
+            let cdc_backend = ChunkStoreBackend::new(&self.cdc_path)?;
+            Ok(Box::new(cdc_backend))
+        })
     }
 
     pub async fn write_file_to_cdc(&self, file: File) -> CdcResult<Vec<u8>> {
-        let mut cdc_manager = self.cdc_manager.lock().await;
-        cdc_manager.write_file_to_cdc(file)
+        self.get_store_backend()?.write_file(file).await
     }
 
     pub async fn read_file_from_cdc(
@@ -62,8 +77,9 @@ impl CdcBackendWrapper {
         pointer_content: &CdcPointer,
         file: &mut File,
     ) -> CdcResult<usize> {
-        let mut cdc_manager = self.cdc_manager.lock().await;
-        cdc_manager.read_file_from_cdc(pointer_content, file)
+        self.get_store_backend()?
+            .read_file(pointer_content, file)
+            .await
     }
 }
 
@@ -85,7 +101,7 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.read_file(path, id)
+        self.git_backend.read_file(path, id)
     }
 
     fn write_file<'life0, 'life1, 'life2, 'async_trait>(
@@ -105,35 +121,35 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.write_file(path, contents)
+        self.git_backend.write_file(path, contents)
     }
 
     fn name(&self) -> &str {
-        self.inner.name()
+        self.git_backend.name()
     }
 
     fn commit_id_length(&self) -> usize {
-        self.inner.commit_id_length()
+        self.git_backend.commit_id_length()
     }
 
     fn change_id_length(&self) -> usize {
-        self.inner.change_id_length()
+        self.git_backend.change_id_length()
     }
 
     fn root_commit_id(&self) -> &CommitId {
-        self.inner.root_commit_id()
+        self.git_backend.root_commit_id()
     }
 
     fn root_change_id(&self) -> &ChangeId {
-        self.inner.root_change_id()
+        self.git_backend.root_change_id()
     }
 
     fn empty_tree_id(&self) -> &TreeId {
-        self.inner.empty_tree_id()
+        self.git_backend.empty_tree_id()
     }
 
     fn concurrency(&self) -> usize {
-        self.inner.concurrency()
+        self.git_backend.concurrency()
     }
 
     fn read_symlink<'life0, 'life1, 'life2, 'async_trait>(
@@ -153,7 +169,7 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.read_symlink(path, id)
+        self.git_backend.read_symlink(path, id)
     }
 
     fn write_symlink<'life0, 'life1, 'life2, 'async_trait>(
@@ -173,7 +189,7 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.write_symlink(path, target)
+        self.git_backend.write_symlink(path, target)
     }
 
     fn read_copy<'life0, 'life1, 'async_trait>(
@@ -191,7 +207,7 @@ impl Backend for CdcBackendWrapper {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.read_copy(id)
+        self.git_backend.read_copy(id)
     }
 
     fn write_copy<'life0, 'life1, 'async_trait>(
@@ -209,7 +225,7 @@ impl Backend for CdcBackendWrapper {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.write_copy(copy)
+        self.git_backend.write_copy(copy)
     }
 
     fn get_related_copies<'life0, 'life1, 'async_trait>(
@@ -227,7 +243,7 @@ impl Backend for CdcBackendWrapper {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.get_related_copies(copy_id)
+        self.git_backend.get_related_copies(copy_id)
     }
 
     fn read_tree<'life0, 'life1, 'life2, 'async_trait>(
@@ -247,7 +263,7 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.read_tree(path, id)
+        self.git_backend.read_tree(path, id)
     }
 
     fn write_tree<'life0, 'life1, 'life2, 'async_trait>(
@@ -267,7 +283,7 @@ impl Backend for CdcBackendWrapper {
         'life2: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.write_tree(path, contents)
+        self.git_backend.write_tree(path, contents)
     }
 
     fn read_commit<'life0, 'life1, 'async_trait>(
@@ -285,7 +301,7 @@ impl Backend for CdcBackendWrapper {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.read_commit(id)
+        self.git_backend.read_commit(id)
     }
 
     fn write_commit<'life0, 'life1, 'async_trait>(
@@ -304,7 +320,7 @@ impl Backend for CdcBackendWrapper {
         'life1: 'async_trait,
         Self: 'async_trait,
     {
-        self.inner.write_commit(contents, sign_with)
+        self.git_backend.write_commit(contents, sign_with)
     }
 
     fn get_copy_records(
@@ -313,12 +329,12 @@ impl Backend for CdcBackendWrapper {
         root: &CommitId,
         head: &CommitId,
     ) -> BackendResult<BoxStream<'_, BackendResult<CopyRecord>>> {
-        self.inner.get_copy_records(paths, root, head)
+        self.git_backend.get_copy_records(paths, root, head)
     }
 
     fn gc(&self, index: &dyn Index, keep_newer: SystemTime) -> BackendResult<()> {
-        self.inner.gc(index, keep_newer)?;
-        let jj_repo = match gix::open(&self.inner.git_repo_path()) {
+        self.git_backend.gc(index, keep_newer)?;
+        let jj_repo = match gix::open(&self.git_backend.git_repo_path()) {
             Ok(repo) => repo,
             Err(e) => return Err(BackendError::Other(e.into())),
         };
@@ -356,18 +372,15 @@ impl Backend for CdcBackendWrapper {
             }
         }
 
-        let mut cdc_manager = self.cdc_manager.blocking_lock();
-        match cdc_manager.gc(keep_manifests) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(BackendError::Other(e.into())),
-        }
+        self.get_store_backend()?.gc(keep_manifests)?;
+        Ok(())
     }
 }
 
 impl std::fmt::Debug for CdcBackendWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CdcBackendWrapper")
-            .field("inner", &self.inner)
+            .field("inner", &self.git_backend)
             .finish()
     }
 }

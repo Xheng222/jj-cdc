@@ -1,6 +1,6 @@
-use std::{collections::HashSet, path::PathBuf};
+use std::{collections::HashSet, path::PathBuf, sync::RwLock};
 
-use gix::{Id, ObjectId, Repository};
+use gix::{Id, ObjectId, Repository, ThreadSafeRepository};
 
 use crate::cdc::{
     cdc_config::{HASH_LENGTH, MANIFEST_ANCHOR_REF, MANIFEST_GIT_DIR},
@@ -10,17 +10,17 @@ use crate::cdc::{
 
 pub type CdcManifest = Vec<[u8; HASH_LENGTH]>;
 
-pub trait ManifestBackend: Send {
+pub trait ManifestBackend: Send + Sync {
     /// 写入 manifest，返回 manifest 的 hash
     fn write_manifest(&self, manifest: CdcManifest) -> CdcResult<CdcPointerBytes>;
     /// 读取 manifest
     fn read_manifest(&self, pointer: &CdcPointer) -> CdcResult<CdcManifest>;
     /// GC
-    fn gc(&mut self, keep_manifests: &[CdcPointer]) -> CdcResult<()>;
+    fn gc(&self, keep_manifests: &[CdcPointer]) -> CdcResult<()>;
 }
 
 pub struct GitManifestBackend {
-    inner: Repository,
+    inner: RwLock<ThreadSafeRepository>,
 }
 
 impl GitManifestBackend {
@@ -47,22 +47,20 @@ impl GitManifestBackend {
         };
 
         Ok(Self {
-            inner: manifest_git,
+            inner: RwLock::new(manifest_git.into_sync()),
         })
     }
 
-    fn get_manifest_tree_oid<'a>(&'a self) -> CdcResult<Id<'a>> {
-        let mut r = self
-            .inner
+    fn get_manifest_tree_oid<'a>(r: &'a Repository) -> CdcResult<Id<'a>> {
+        let mut r = r
             .find_reference(MANIFEST_ANCHOR_REF)
             .map_err(CdcError::from_git)?;
         let id = r.peel_to_id().map_err(CdcError::from_git)?;
         Ok(id)
     }
 
-    fn set_manifest_tree_oid<'a>(&'a self, new_tree: Id<'a>) -> CdcResult<()> {
-        let mut r = self
-            .inner
+    fn set_manifest_tree_oid<'a>(r: &'a Repository, new_tree: Id<'a>) -> CdcResult<()> {
+        let mut r = r
             .find_reference(MANIFEST_ANCHOR_REF)
             .map_err(CdcError::from_git)?;
         r.set_target_id(new_tree, "set manifest tree oid")
@@ -73,20 +71,16 @@ impl GitManifestBackend {
 
 impl ManifestBackend for GitManifestBackend {
     fn write_manifest(&self, manifest: CdcManifest) -> CdcResult<CdcPointerBytes> {
+        let repo = self.inner.write().unwrap();
         let manifest_bytes = encode_manifest_raw(manifest);
-        let blob_id = self
-            .inner
-            .write_blob(manifest_bytes)
-            .map_err(CdcError::from_git)?;
+        let r = repo.to_thread_local();
+        let blob_id = r.write_blob(manifest_bytes).map_err(CdcError::from_git)?;
 
         let manifest_hash = blob_id.to_string();
         let (prefix, suffix) = split_manifest_hash(&manifest_hash);
 
-        let manifest_tree_oid = self.get_manifest_tree_oid()?;
-        let mut editor = self
-            .inner
-            .edit_tree(manifest_tree_oid)
-            .map_err(CdcError::from_git)?;
+        let manifest_tree_oid = Self::get_manifest_tree_oid(&r)?;
+        let mut editor = r.edit_tree(manifest_tree_oid).map_err(CdcError::from_git)?;
         editor
             .upsert(
                 format!("{prefix}/{suffix}"),
@@ -95,28 +89,28 @@ impl ManifestBackend for GitManifestBackend {
             )
             .map_err(CdcError::from_git)?;
         let new_tree_oid = editor.write().map_err(CdcError::from_git)?;
-        self.set_manifest_tree_oid(new_tree_oid)?;
+        Self::set_manifest_tree_oid(&r, new_tree_oid)?;
 
         Ok(CdcPointer::new(manifest_hash).serialize())
     }
 
     fn read_manifest(&self, pointer: &CdcPointer) -> CdcResult<CdcManifest> {
         let oid = oid_from_hex(pointer.hash())?;
-        let blob = self.inner.find_blob(oid).map_err(CdcError::from_git)?;
+        let r = self.inner.read().unwrap().to_thread_local();
+        let blob = r.find_blob(oid).map_err(CdcError::from_git)?;
         let manifest = decode_manifest_raw(&blob.data);
         Ok(manifest)
     }
 
-    fn gc(&mut self, keep_manifests: &[CdcPointer]) -> CdcResult<()> {
+    fn gc(&self, keep_manifests: &[CdcPointer]) -> CdcResult<()> {
         let keep_set: HashSet<_> = keep_manifests.iter().map(|p| p.hash()).collect();
-        let repo_path = self.inner.path().to_path_buf();
+        let repo_path;
         {
+            let r = self.inner.write().unwrap().to_thread_local();
+            repo_path = r.path().to_path_buf();
             // 获取当前的 manifest tree
-            let manifest_tree_oid = self.get_manifest_tree_oid()?;
-            let tree = self
-                .inner
-                .find_tree(manifest_tree_oid)
-                .map_err(CdcError::from_git)?;
+            let manifest_tree_oid = Self::get_manifest_tree_oid(&r)?;
+            let tree = r.find_tree(manifest_tree_oid).map_err(CdcError::from_git)?;
 
             // 收集所有需要删除的 manifest 路径
             let mut to_remove = Vec::new();
@@ -131,10 +125,7 @@ impl ManifestBackend for GitManifestBackend {
                     let prefix = entry.filename();
 
                     let subtree_oid = entry.oid();
-                    let subtree = self
-                        .inner
-                        .find_tree(subtree_oid)
-                        .map_err(CdcError::from_git)?;
+                    let subtree = r.find_tree(subtree_oid).map_err(CdcError::from_git)?;
 
                     // 遍历子目录中的 blob
                     for subentry in subtree.iter() {
@@ -164,24 +155,20 @@ impl ManifestBackend for GitManifestBackend {
 
             // 如果有需要删除的 manifest，执行删除操作
             if !to_remove.is_empty() {
-                let mut editor = self
-                    .inner
-                    .edit_tree(manifest_tree_oid)
-                    .map_err(CdcError::from_git)?;
+                let mut editor = r.edit_tree(manifest_tree_oid).map_err(CdcError::from_git)?;
 
                 for path in to_remove {
                     editor.remove(path).map_err(CdcError::from_git)?;
                 }
 
                 let new_tree_oid = editor.write().map_err(CdcError::from_git)?;
-                self.set_manifest_tree_oid(new_tree_oid)?;
+                Self::set_manifest_tree_oid(&r, new_tree_oid)?;
             }
-
-
         }
 
         let new_repo = gix::open(&repo_path).map_err(CdcError::from_git)?;
-        self.inner = new_repo;
+        let mut inner = self.inner.write().unwrap();
+        *inner = new_repo.into_sync();
 
         // 调用 git gc 清理仓库
         std::process::Command::new("git")

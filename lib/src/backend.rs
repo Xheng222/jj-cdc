@@ -278,6 +278,9 @@ pub enum BackendError {
         object_type: &'static str,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    /// CDC error.
+    #[error(transparent)]
+    CdcError(#[from] crate::cdc::cdc_error::CdcError),
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync>),
     /// A valid operation attempted, but failed because it isn't supported by
