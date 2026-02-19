@@ -204,7 +204,7 @@ async fn cmd_git_colocation_enable(
     set_git_repo_bare(&dot_git_path, false)?;
 
     // Reload the workspace command helper to ensure it picks up the changes
-    let workspace_command = command.workspace_helper_no_snapshot(ui)?;
+    let workspace_command = command.workspace_helper_no_snapshot(ui).await?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // Add a .jj/.gitignore file (if needed) to ensure that the colocated Git
@@ -306,7 +306,7 @@ async fn cmd_git_colocation_disable(
     std::fs::remove_file(&jj_gitignore_path).ok();
 
     // Reload the workspace command helper to ensure it picks up the changes
-    let workspace_command = command.workspace_helper_no_snapshot(ui)?;
+    let workspace_command = command.workspace_helper_no_snapshot(ui).await?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // And finally, remove the git HEAD reference
@@ -314,7 +314,7 @@ async fn cmd_git_colocation_disable(
 
     let mut tx = workspace_command.start_transaction();
     tx.repo_mut().remove_local_git();
-    tx.finish(ui, "remove git-tracking bookmark")?;
+    tx.finish(ui, "remove git-tracking bookmark").await?;
 
     writeln!(
         ui.status(),

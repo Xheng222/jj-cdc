@@ -54,7 +54,6 @@ impl CdcPointer {
             return Ok(TryParseResult::NotCdcPointer(magic_buf[..n].to_vec()));
         }
 
-        // 魔数匹配，这应该是一个 CDC 指针
         let mut hash_bytes = Vec::new();
         reader.read_to_end(&mut hash_bytes).await?;
 
@@ -75,8 +74,6 @@ impl CdcPointer {
 
     #[inline]
     pub fn is_cdc_pointer(bytes: &[u8]) -> bool {
-        let is_start_with_magic = bytes.starts_with(MAGIC);
-        tracing::debug!("is_cdc_pointer: starts_with_magic={}, bytes={:?}", is_start_with_magic, bytes);
-        is_start_with_magic
+        bytes.starts_with(MAGIC)
     }
 }

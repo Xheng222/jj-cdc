@@ -33,4 +33,3 @@ fn main() -> std::process::ExitCode {
 
     CliRunner::init().version(env!("JJ_VERSION")).run().into()
 }
-
