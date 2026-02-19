@@ -1976,7 +1976,7 @@ impl FileSnapshotter<'_> {
         if let Some(cdc_backend_wrapper) =
             self.store()
                 .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
-            && crate::cdc::cdc_manager::CdcMagager::is_binary_file(&mut file)
+            && crate::cdc::utils::is_binary_file(&mut file)
         {
             let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
             let mut async_pointer_content = AllowStdIo::new(std::io::Cursor::new(pointer_content));
