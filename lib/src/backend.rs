@@ -373,6 +373,9 @@ pub enum BackendError {
         /// The source error.
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    /// CDC error.
+    #[error(transparent)]
+    CdcError(#[from] crate::cdc::cdc_error::CdcError),
     /// Some other error that doesn't fit into the above categories.
     #[error(transparent)]
     Other(Box<dyn std::error::Error + Send + Sync>),
