@@ -1956,13 +1956,9 @@ impl FileSnapshotter<'_> {
         if let Some(cdc_backend_wrapper) =
             self.store()
                 .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
-            && crate::cdc::cdc_manager::CdcMagager::is_binary_file(&mut file)
+            && crate::cdc::utils::is_binary_file(&mut file)
         {
-            // tracing::debug!("write file to cdc {:?}", disk_path.display());
-            // let start_time = std::time::Instant::now();
             let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
-            // let end_time = std::time::Instant::now();
-            // eprintln!("after write file to store {:?}, time: {:?}", disk_path.display(), end_time.duration_since(start_time));
             let result = Ok(self
                 .store()
                 .write_file(path, &mut std::io::Cursor::new(pointer_content))
