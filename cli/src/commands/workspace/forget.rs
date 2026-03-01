@@ -59,7 +59,7 @@ pub struct WorkspaceForgetArgs {
     /// By default, removal will fail if the worktree has uncommitted changes.
     /// Use --force together with --cleanup to remove it anyway.
     #[cfg(feature = "git")]
-    #[arg(long)]
+    #[arg(long, default_value_t = true)]
     cleanup: bool,
 
     /// Force removal of Git worktrees even if they have uncommitted changes
