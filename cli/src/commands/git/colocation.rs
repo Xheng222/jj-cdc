@@ -310,7 +310,7 @@ async fn cmd_git_colocation_disable(
 
     let mut tx = workspace_command.start_transaction();
     tx.repo_mut().remove_local_git();
-    tx.finish(ui, "remove git-tracking bookmark")?;
+    tx.finish(ui, "remove git-tracking bookmark").await?;
 
     writeln!(
         ui.status(),
