@@ -173,7 +173,7 @@ pub(crate) struct FixArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_fix(
+pub(crate) async fn cmd_fix(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &FixArgs,
@@ -236,7 +236,7 @@ pub(crate) fn cmd_fix(
         tx.repo_mut(),
         &mut parallel_fixer,
     )
-    .block_on()?;
+    .await?;
     writeln!(
         ui.status(),
         "Fixed {} commits of {} checked.",

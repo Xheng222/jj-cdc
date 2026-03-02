@@ -17,7 +17,6 @@ use jj_lib::absorb::AbsorbSource;
 use jj_lib::absorb::absorb_hunks;
 use jj_lib::absorb::split_hunks_to_trees;
 use jj_lib::matchers::EverythingMatcher;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -67,7 +66,7 @@ pub(crate) struct AbsorbArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_absorb(
+pub(crate) async fn cmd_absorb(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &AbsorbArgs,
@@ -83,8 +82,8 @@ pub(crate) fn cmd_absorb(
     let matcher = fileset_expression.to_matcher();
 
     let repo = workspace_command.repo().as_ref();
-    let source = AbsorbSource::from_commit(repo, source_commit.clone())?;
-    let selected_trees = split_hunks_to_trees(repo, &source, &destinations, &matcher).block_on()?;
+    let source = AbsorbSource::from_commit(repo, source_commit.clone()).await?;
+    let selected_trees = split_hunks_to_trees(repo, &source, &destinations, &matcher).await?;
 
     print_unmatched_explicit_paths(
         ui,
@@ -102,7 +101,7 @@ pub(crate) fn cmd_absorb(
     workspace_command.check_rewritable(selected_trees.target_commits.keys())?;
 
     let mut tx = workspace_command.start_transaction();
-    let stats = absorb_hunks(tx.repo_mut(), &source, selected_trees.target_commits)?;
+    let stats = absorb_hunks(tx.repo_mut(), &source, selected_trees.target_commits).await?;
 
     if let Some(mut formatter) = ui.status_formatter() {
         if !stats.rewritten_destinations.is_empty() {
@@ -145,7 +144,7 @@ pub(crate) fn cmd_absorb(
             let width = ui.term_width();
             diff_renderer
                 .show_patch(ui, formatter.as_mut(), commit, matcher, width)
-                .block_on()?;
+                .await?;
         }
     }
     Ok(())

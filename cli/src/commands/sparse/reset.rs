@@ -25,7 +25,7 @@ use crate::ui::Ui;
 pub struct SparseResetArgs {}
 
 #[instrument(skip_all)]
-pub fn cmd_sparse_reset(
+pub async fn cmd_sparse_reset(
     ui: &mut Ui,
     command: &CommandHelper,
     _args: &SparseResetArgs,
@@ -34,4 +34,5 @@ pub fn cmd_sparse_reset(
     update_sparse_patterns_with(ui, &mut workspace_command, |_ui, _old_patterns| {
         Ok(vec![RepoPathBuf::root()])
     })
+    .await
 }

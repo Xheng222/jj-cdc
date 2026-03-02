@@ -142,34 +142,6 @@ fn test_undo_ignores_op_revert() {
 }
 
 #[test]
-fn test_undo_with_rev_arg_falls_back_to_revert() {
-    let test_env = TestEnvironment::default();
-    test_env.run_jj_in(".", ["git", "init", "repo"]).success();
-    let work_dir = test_env.work_dir("repo");
-
-    work_dir.run_jj(["new", "-m", "will be reverted"]).success();
-    work_dir.run_jj(["new", "-m", "will remain"]).success();
-    let output = work_dir.run_jj(["undo", "@-"]);
-    insta::assert_snapshot!(output, @"
-    ------- stderr -------
-    Warning: `jj undo <operation>` is deprecated; use `jj op revert <operation>` instead
-    Reverted operation: bd38e657b210 (2001-02-03 08:05:08) new empty commit
-    Rebased 1 descendant commits
-    Working copy  (@) now at: kkmpptxz 48f21213 (empty) will remain
-    Parent commit (@-)      : qpvuntsm e8849ae1 (empty) (no description set)
-    [EOF]
-    ");
-
-    let output = work_dir.run_jj(["op", "log", "-n1"]);
-    insta::assert_snapshot!(output, @"
-    @  f46a6c31f65b test-username@host.example.com 2001-02-03 04:05:10.000 +07:00 - 2001-02-03 04:05:10.000 +07:00
-    │  revert operation bd38e657b210a352a798e73366bfee01b120e6ecd023431be8ebc427c054b20a6fe56d6c33ee60152a35ef9fa45279a3301bb5fd16e9e4dfba95fa5b6ab27047
-    │  args: jj undo @-
-    [EOF]
-    ");
-}
-
-#[test]
 fn test_redo_non_undo_operation() {
     let test_env = TestEnvironment::default();
     test_env.run_jj_in(".", ["git", "init", "repo"]).success();

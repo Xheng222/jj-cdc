@@ -18,6 +18,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 * Dropped support for legacy index files written by jj < 0.33. New index files
   will be created as needed.
 
+* The following deprecated config options have been removed:
+  - `core.fsmonitor`
+  - `core.watchman.register-snapshot-trigger`
+
+* The deprecated command `jj op undo` has been removed. Use `jj op revert` or
+  `jj undo`/`redo` instead.
+
 ### Deprecations
 
 * `jj debug snapshot` is deprecated in favor of `jj util snapshot`. Although
@@ -102,7 +109,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 * Templates now support `Serialize` operations on the result of `map()` and
   `if()`, when supported by the underlying type.
 
+* `jj bookmark rename` now supports `--overwrite-existing` to allow renaming a
+  bookmark even if the new name already exists, effectively replacing the
+  existing bookmark.
+
 ### Fixed bugs
+
+* Windows: use native file locks (`LockFileEx`) instead of polling with file
+  creation, fixing issues with "pending delete" semantics leaving lock files
+  stuck.
+
+* `jj` now safely detaches the `HEAD` of alternate Git worktrees if their
+  checked-out branch is moved or deleted during Git export.
 
 ## [0.38.0] - 2026-02-04
 

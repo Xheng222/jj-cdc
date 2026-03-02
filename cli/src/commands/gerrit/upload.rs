@@ -32,7 +32,6 @@ use jj_lib::settings::UserSettings;
 use jj_lib::store::Store;
 use jj_lib::trailer::Trailer;
 use jj_lib::trailer::parse_description_trailers;
-use pollster::FutureExt as _;
 
 use crate::cli_util::CommandHelper;
 use crate::cli_util::RevisionArg;
@@ -373,7 +372,7 @@ fn push_options(args: &UploadArgs) -> Result<Vec<String>, CommandError> {
     .collect())
 }
 
-pub fn cmd_gerrit_upload(
+pub async fn cmd_gerrit_upload(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &UploadArgs,
@@ -586,7 +585,7 @@ pub fn cmd_gerrit_upload(
             .set_committer(original_commit.committer().clone())
             .set_author(original_commit.author().clone())
             .write()
-            .block_on()?;
+            .await?;
 
         old_to_new.insert(original_commit.id().clone(), new_commit);
     }

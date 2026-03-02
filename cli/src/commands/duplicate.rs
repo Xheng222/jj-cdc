@@ -23,7 +23,6 @@ use jj_lib::repo::Repo as _;
 use jj_lib::rewrite::DuplicateCommitsStats;
 use jj_lib::rewrite::duplicate_commits;
 use jj_lib::rewrite::duplicate_commits_onto_parents;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -100,7 +99,7 @@ pub(crate) struct DuplicateArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_duplicate(
+pub(crate) async fn cmd_duplicate(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &DuplicateArgs,
@@ -198,9 +197,9 @@ pub(crate) fn cmd_duplicate(
             &parent_commit_ids,
             &children_commit_ids,
         )
-        .block_on()?
+        .await?
     } else {
-        duplicate_commits_onto_parents(tx.repo_mut(), &to_duplicate, &new_descs).block_on()?
+        duplicate_commits_onto_parents(tx.repo_mut(), &to_duplicate, &new_descs).await?
     };
 
     if let Some(mut formatter) = ui.status_formatter() {

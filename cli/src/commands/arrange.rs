@@ -33,7 +33,6 @@ use jj_lib::repo::MutableRepo;
 use jj_lib::repo::Repo as _;
 use jj_lib::revset::RevsetIteratorExt as _;
 use jj_lib::rewrite::CommitRewriter;
-use pollster::FutureExt as _;
 use ratatui::Terminal;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
@@ -74,7 +73,7 @@ pub(crate) struct ArrangeArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_arrange(
+pub(crate) async fn cmd_arrange(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &ArrangeArgs,
@@ -138,7 +137,7 @@ pub(crate) fn cmd_arrange(
 
     if let Some(new_state) = result? {
         let mut tx = workspace_command.start_transaction();
-        new_state.apply_changes(tx.repo_mut()).block_on()?;
+        new_state.apply_changes(tx.repo_mut()).await?;
         tx.finish(ui, "arrange revisions")?;
         Ok(())
     } else {
@@ -241,6 +240,14 @@ impl State {
         )
         .unwrap();
         self.current_order = commit_ids.into_iter().cloned().collect();
+    }
+
+    /// Check if one commit is a parent of the other or vice versa.
+    fn are_graph_neighbors(&self, a_idx: usize, b_idx: usize) -> bool {
+        let a_id = &self.current_order[a_idx];
+        let b_id = &self.current_order[b_idx];
+        self.parents.get(b_id).unwrap().contains(a_id)
+            || self.parents.get(a_id).unwrap().contains(b_id)
     }
 
     fn swap_commits(&mut self, a_idx: usize, b_idx: usize) {
@@ -404,14 +411,23 @@ fn run_tui<B: ratatui::backend::Backend>(
                     let id = state.current_order[state.current_selection].clone();
                     state.actions.insert(id, Action::Keep);
                 }
-                // TODO: Allow swapping up/down only within linear parts of the graph.
                 (KeyCode::Down | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
-                    if state.current_selection + 1 < state.commits.len() {
+                    if state.current_selection + 1 < state.commits.len()
+                        && state.are_graph_neighbors(
+                            state.current_selection,
+                            state.current_selection + 1,
+                        )
+                    {
                         state.swap_commits(state.current_selection, state.current_selection + 1);
                     }
                 }
                 (KeyCode::Up | KeyCode::Char('K'), KeyModifiers::SHIFT) => {
-                    if state.current_selection > 0 {
+                    if state.current_selection > 0
+                        && state.are_graph_neighbors(
+                            state.current_selection,
+                            state.current_selection - 1,
+                        )
+                    {
                         state.swap_commits(state.current_selection, state.current_selection - 1);
                     }
                 }
@@ -505,6 +521,7 @@ fn render(
 #[cfg(test)]
 mod tests {
     use maplit::hashset;
+    use pollster::FutureExt as _;
     use testutils::CommitBuilderExt as _;
     use testutils::TestRepo;
 

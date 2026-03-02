@@ -18,12 +18,12 @@ use std::io::Read as _;
 use std::iter;
 
 use clap_complete::ArgValueCompleter;
+use futures::future::try_join_all;
 use itertools::Itertools as _;
 use jj_lib::backend::Signature;
 use jj_lib::object_id::ObjectId as _;
 use jj_lib::repo::Repo as _;
 use jj_lib::revset::RevsetIteratorExt as _;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -126,7 +126,7 @@ pub(crate) struct DescribeArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_describe(
+pub(crate) async fn cmd_describe(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &DescribeArgs,
@@ -230,7 +230,7 @@ pub(crate) fn cmd_describe(
             // can be discarded as soon as it's no longer the working copy. Adding a
             // trailer to an empty description would break that logic.
             if use_editor || !commit_builder.description().is_empty() {
-                let temp_commit = commit_builder.write_hidden().block_on()?;
+                let temp_commit = commit_builder.write_hidden().await?;
                 let new_description = add_trailers_with_template(&trailer_template, &temp_commit)?;
                 commit_builder.set_description(new_description);
             }
@@ -238,16 +238,18 @@ pub(crate) fn cmd_describe(
     }
 
     if use_editor {
-        let temp_commits: Vec<_> = iter::zip(&commits, &commit_builders)
-            // Edit descriptions in topological order
-            .rev()
-            .map(|(commit, commit_builder)| {
-                commit_builder
-                    .write_hidden()
-                    .block_on()
-                    .map(|temp_commit| (commit.id(), temp_commit))
-            })
-            .try_collect()?;
+        let temp_commits: Vec<_> = try_join_all(
+            iter::zip(&commits, &commit_builders)
+                // Edit descriptions in topological order
+                .rev()
+                .map(async |(commit, commit_builder)| {
+                    commit_builder
+                        .write_hidden()
+                        .await
+                        .map(|temp_commit| (commit.id(), temp_commit))
+                }),
+        )
+        .await?;
 
         if let [(_, temp_commit)] = &*temp_commits {
             let intro = "";
@@ -333,7 +335,7 @@ pub(crate) fn cmd_describe(
                 Ok(())
             },
         )
-        .block_on()?;
+        .await?;
     if num_described > 1 {
         writeln!(ui.status(), "Updated {num_described} commits")?;
     }

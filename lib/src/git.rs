@@ -1250,16 +1250,16 @@ pub fn export_some_refs(
         Some(value)
     }
 
-    let git_repo = get_git_repo(mut_repo.store())?;
-
     let AllRefsToExport { bookmarks, tags } = diff_refs_to_export(
         mut_repo.view(),
         mut_repo.store().root_commit_id(),
         &git_ref_filter,
     );
 
-    // TODO: Also check other worktrees' HEAD.
-    if let Ok(head_ref) = git_repo.find_reference("HEAD") {
+    let check_and_detach_head = |git_repo: &gix::Repository| -> Result<(), GitExportError> {
+        let Ok(head_ref) = git_repo.find_reference("HEAD") else {
+            return Ok(());
+        };
         let target_name = head_ref.target().try_name().map(|name| name.to_owned());
         if let Some((kind, symbol)) = target_name
             .as_ref()
@@ -1291,12 +1291,22 @@ pub fn export_some_refs(
             };
             if new_oid != current_oid.as_ref() {
                 update_git_head(
-                    &git_repo,
+                    git_repo,
                     gix::refs::transaction::PreviousValue::MustExistAndMatch(old_target),
                     current_oid,
                 )
                 .map_err(GitExportError::from_git)?;
             }
+        }
+        Ok(())
+    };
+
+    let git_repo = get_git_repo(mut_repo.store())?;
+
+    check_and_detach_head(&git_repo)?;
+    for worktree in git_repo.worktrees().map_err(GitExportError::from_git)? {
+        if let Ok(worktree_repo) = worktree.into_repo_with_possibly_inaccessible_worktree() {
+            check_and_detach_head(&worktree_repo)?;
         }
     }
 
@@ -1862,7 +1872,7 @@ fn reset_index(
     git_repo: &gix::Repository,
     wc_commit: &Commit,
 ) -> Result<(), GitResetHeadError> {
-    let parent_tree = wc_commit.parent_tree(repo)?;
+    let parent_tree = wc_commit.parent_tree(repo).block_on()?;
     // Use the merged parent tree as the Git index, allowing `git diff` to show the
     // same changes as `jj diff`. If the merged parent tree has conflicts, then the
     // Git index will also be conflicted.

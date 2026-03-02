@@ -15,7 +15,6 @@
 use itertools::Itertools as _;
 use jj_lib::object_id::ObjectId as _;
 use jj_lib::op_store::OperationId;
-use pollster::FutureExt as _;
 
 use crate::cli_util::CommandHelper;
 use crate::command_error::CommandError;
@@ -40,7 +39,11 @@ pub struct RedoArgs {}
 
 const REDO_OP_DESC_PREFIX: &str = "redo: restore to operation ";
 
-pub fn cmd_redo(ui: &mut Ui, command: &CommandHelper, _: &RedoArgs) -> Result<(), CommandError> {
+pub async fn cmd_redo(
+    ui: &mut Ui,
+    command: &CommandHelper,
+    _: &RedoArgs,
+) -> Result<(), CommandError> {
     let mut workspace_command = command.workspace_helper(ui)?;
 
     let mut op_to_redo = workspace_command.repo().operation().clone();
@@ -106,7 +109,7 @@ pub fn cmd_redo(ui: &mut Ui, command: &CommandHelper, _: &RedoArgs) -> Result<()
             .repo()
             .loader()
             .load_operation(&id_of_restored_op)
-            .block_on()?;
+            .await?;
     }
 
     if !op_to_redo
@@ -146,12 +149,12 @@ pub fn cmd_redo(ui: &mut Ui, command: &CommandHelper, _: &RedoArgs) -> Result<()
             .repo()
             .loader()
             .load_operation(&id_of_original_op)
-            .block_on()?;
+            .await?;
     }
 
     let mut tx = workspace_command.start_transaction();
     let new_view = view_with_desired_portions_restored(
-        op_to_restore.view().block_on()?.store_view(),
+        op_to_restore.view().await?.store_view(),
         tx.base_repo().view().store_view(),
         &DEFAULT_REVERT_WHAT,
     );

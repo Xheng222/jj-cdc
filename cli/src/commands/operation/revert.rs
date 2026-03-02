@@ -17,7 +17,6 @@ use itertools::Itertools as _;
 use jj_lib::object_id::ObjectId as _;
 use jj_lib::operation::Operation;
 use jj_lib::repo::Repo as _;
-use pollster::FutureExt as _;
 
 use super::DEFAULT_REVERT_WHAT;
 use super::RevertWhatToRestore;
@@ -39,20 +38,20 @@ pub struct OperationRevertArgs {
     /// Use `jj op log` to find an operation to revert.
     #[arg(default_value = "@")]
     #[arg(add = ArgValueCandidates::new(complete::operations))]
-    pub(crate) operation: String, // pub for `jj undo`
+    operation: String,
 
     /// What portions of the local state to restore (can be repeated)
     ///
     /// This option is EXPERIMENTAL.
     #[arg(long, value_enum, default_values_t = DEFAULT_REVERT_WHAT)]
-    pub(crate) what: Vec<RevertWhatToRestore>, // pub for `jj undo`
+    what: Vec<RevertWhatToRestore>,
 }
 
 fn tx_description(op: &Operation) -> String {
     format!("revert operation {}", op.id().hex())
 }
 
-pub fn cmd_op_revert(
+pub async fn cmd_op_revert(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &OperationRevertArgs,
@@ -67,9 +66,9 @@ pub fn cmd_op_revert(
 
     let mut tx = workspace_command.start_transaction();
     let repo_loader = tx.base_repo().loader();
-    let bad_repo = repo_loader.load_at(&bad_op).block_on()?;
-    let parent_repo = repo_loader.load_at(&parent_of_bad_op).block_on()?;
-    tx.repo_mut().merge(&bad_repo, &parent_repo).block_on()?;
+    let bad_repo = repo_loader.load_at(&bad_op).await?;
+    let parent_repo = repo_loader.load_at(&parent_of_bad_op).await?;
+    tx.repo_mut().merge(&bad_repo, &parent_repo).await?;
     let new_view = view_with_desired_portions_restored(
         tx.repo().view().store_view(),
         tx.base_repo().view().store_view(),

@@ -22,7 +22,6 @@ use jj_lib::file_util::IoResultExt as _;
 use jj_lib::git;
 use jj_lib::op_store::RefTarget;
 use jj_lib::repo::Repo as _;
-use pollster::FutureExt as _;
 
 use crate::cli_util::CommandHelper;
 use crate::command_error::CommandError;
@@ -70,15 +69,15 @@ pub enum GitColocationCommand {
     Status(GitColocationStatusArgs),
 }
 
-pub fn cmd_git_colocation(
+pub async fn cmd_git_colocation(
     ui: &mut Ui,
     command: &CommandHelper,
     subcommand: &GitColocationCommand,
 ) -> Result<(), CommandError> {
     match subcommand {
-        GitColocationCommand::Disable(args) => cmd_git_colocation_disable(ui, command, args),
-        GitColocationCommand::Enable(args) => cmd_git_colocation_enable(ui, command, args),
-        GitColocationCommand::Status(args) => cmd_git_colocation_status(ui, command, args),
+        GitColocationCommand::Disable(args) => cmd_git_colocation_disable(ui, command, args).await,
+        GitColocationCommand::Enable(args) => cmd_git_colocation_enable(ui, command, args).await,
+        GitColocationCommand::Status(args) => cmd_git_colocation_status(ui, command, args).await,
     }
 }
 
@@ -101,7 +100,7 @@ fn workspace_supports_git_colocation_commands(
     Ok(())
 }
 
-fn cmd_git_colocation_status(
+async fn cmd_git_colocation_status(
     ui: &mut Ui,
     command: &CommandHelper,
     _args: &GitColocationStatusArgs,
@@ -156,7 +155,7 @@ fn cmd_git_colocation_status(
     Ok(())
 }
 
-fn cmd_git_colocation_enable(
+async fn cmd_git_colocation_enable(
     ui: &mut Ui,
     command: &CommandHelper,
     _args: &GitColocationEnableArgs,
@@ -168,11 +167,7 @@ fn cmd_git_colocation_enable(
 
     // Then ensure that the workspace is not already colocated before proceeding.
     // Use None for ui - the warning is already shown during workspace loading.
-    if is_colocated_git_workspace(
-        None,
-        workspace_command.workspace(),
-        workspace_command.repo(),
-    ) {
+    if is_colocated_git_workspace(None, workspace_command.workspace(), workspace_command.repo()) {
         writeln!(ui.status(), "Workspace is already colocated with Git.")?;
         return Ok(());
     }
@@ -212,7 +207,7 @@ fn cmd_git_colocation_enable(
 
     // Reload the workspace command helper to ensure it picks up the changes
     let workspace_command = command.workspace_helper_no_snapshot(ui)?;
-    let mut workspace_command = reload_workspace_helper(ui, command, workspace_command)?;
+    let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // Add a .jj/.gitignore file (if needed) to ensure that the colocated Git
     // repository does not track Jujutsu's repository
@@ -230,7 +225,7 @@ fn cmd_git_colocation_enable(
     Ok(())
 }
 
-fn cmd_git_colocation_disable(
+async fn cmd_git_colocation_disable(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &GitColocationDisableArgs,
@@ -314,7 +309,7 @@ fn cmd_git_colocation_disable(
 
     // Reload the workspace command helper to ensure it picks up the changes
     let workspace_command = command.workspace_helper_no_snapshot(ui)?;
-    let mut workspace_command = reload_workspace_helper(ui, command, workspace_command)?;
+    let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // And finally, remove the git HEAD reference
     remove_git_head(ui, &mut workspace_command)?;
@@ -389,7 +384,7 @@ fn remove_git_head(
 }
 
 /// Gets an up to date workspace helper to pick up changes made to the repo
-fn reload_workspace_helper(
+async fn reload_workspace_helper(
     ui: &mut Ui,
     command: &CommandHelper,
     workspace_command: crate::cli_util::WorkspaceCommandHelper,
@@ -401,8 +396,8 @@ fn reload_workspace_helper(
     let op = workspace
         .repo_loader()
         .load_operation(workspace_command.repo().op_id())
-        .block_on()?;
-    let repo = workspace.repo_loader().load_at(&op).block_on()?;
+        .await?;
+    let repo = workspace.repo_loader().load_at(&op).await?;
     let workspace_command = command.for_workable_repo(ui, workspace, repo)?;
     Ok(workspace_command)
 }

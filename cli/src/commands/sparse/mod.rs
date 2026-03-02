@@ -19,7 +19,6 @@ mod set;
 
 use clap::Subcommand;
 use jj_lib::repo_path::RepoPathBuf;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use self::edit::SparseEditArgs;
@@ -48,20 +47,20 @@ pub(crate) enum SparseCommand {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_sparse(
+pub(crate) async fn cmd_sparse(
     ui: &mut Ui,
     command: &CommandHelper,
     subcommand: &SparseCommand,
 ) -> Result<(), CommandError> {
     match subcommand {
-        SparseCommand::Edit(args) => cmd_sparse_edit(ui, command, args),
-        SparseCommand::List(args) => cmd_sparse_list(ui, command, args),
-        SparseCommand::Reset(args) => cmd_sparse_reset(ui, command, args),
-        SparseCommand::Set(args) => cmd_sparse_set(ui, command, args),
+        SparseCommand::Edit(args) => cmd_sparse_edit(ui, command, args).await,
+        SparseCommand::List(args) => cmd_sparse_list(ui, command, args).await,
+        SparseCommand::Reset(args) => cmd_sparse_reset(ui, command, args).await,
+        SparseCommand::Set(args) => cmd_sparse_set(ui, command, args).await,
     }
 }
 
-fn update_sparse_patterns_with(
+async fn update_sparse_patterns_with(
     ui: &mut Ui,
     workspace_command: &mut WorkspaceCommandHelper,
     f: impl FnOnce(&mut Ui, &[RepoPathBuf]) -> Result<Vec<RepoPathBuf>, CommandError>,
@@ -71,7 +70,7 @@ fn update_sparse_patterns_with(
     let stats = locked_ws
         .locked_wc()
         .set_sparse_patterns(new_patterns)
-        .block_on()
+        .await
         .map_err(|err| internal_error_with_message("Failed to update working copy paths", err))?;
     let operation_id = locked_ws.locked_wc().old_operation_id().clone();
     locked_ws.finish(operation_id)?;

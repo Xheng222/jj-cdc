@@ -21,7 +21,6 @@ use itertools::Itertools as _;
 use jj_lib::commit::conflict_label_for_commits;
 use jj_lib::merge::Diff;
 use jj_lib::object_id::ObjectId as _;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -102,7 +101,7 @@ pub(crate) struct RestoreArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_restore(
+pub(crate) async fn cmd_restore(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &RestoreArgs,
@@ -128,7 +127,9 @@ pub(crate) fn cmd_restore(
     } else {
         to_commit = workspace_command
             .resolve_single_rev(ui, args.changes_in.as_ref().unwrap_or(&RevisionArg::AT))?;
-        from_tree = to_commit.parent_tree(workspace_command.repo().as_ref())?;
+        from_tree = to_commit
+            .parent_tree(workspace_command.repo().as_ref())
+            .await?;
         from_commits = to_commit.parents().try_collect()?;
     }
     workspace_command.check_rewritable([to_commit.id()])?;
@@ -180,16 +181,16 @@ pub(crate) fn cmd_restore(
             .rewrite_commit(&to_commit)
             .set_tree(new_tree)
             .write()
-            .block_on()?;
+            .await?;
         // rebase_descendants early; otherwise the new commit would always have
         // a conflicted change id at this point.
         let (num_rebased, extra_msg) = if args.restore_descendants {
             (
-                tx.repo_mut().reparent_descendants().block_on()?,
+                tx.repo_mut().reparent_descendants().await?,
                 " (while preserving their content)",
             )
         } else {
-            (tx.repo_mut().rebase_descendants().block_on()?, "")
+            (tx.repo_mut().rebase_descendants().await?, "")
         };
         if let Some(mut formatter) = ui.status_formatter()
             && num_rebased > 0

@@ -23,6 +23,7 @@ use jj_lib::merge::Diff;
 use jj_lib::merge::Merge;
 use jj_lib::merged_tree::MergedTree;
 use jj_lib::object_id::ObjectId as _;
+use jj_lib::rewrite::CommitRewriter;
 use jj_lib::rewrite::CommitWithSelection;
 use jj_lib::rewrite::EmptyBehavior;
 use jj_lib::rewrite::MoveCommitsLocation;
@@ -31,7 +32,6 @@ use jj_lib::rewrite::RebaseOptions;
 use jj_lib::rewrite::RebasedCommit;
 use jj_lib::rewrite::RewriteRefsOptions;
 use jj_lib::rewrite::move_commits;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -201,7 +201,7 @@ pub(crate) struct SplitArgs {
 impl SplitArgs {
     /// Resolves the raw SplitArgs into the components necessary to run the
     /// command. Returns an error if the command cannot proceed.
-    fn resolve(
+    async fn resolve(
         &self,
         ui: &Ui,
         workspace_command: &WorkspaceCommandHelper,
@@ -237,7 +237,7 @@ impl SplitArgs {
             &fileset_expression,
             [
                 // We check the parent commit to account for deleted files.
-                &target_commit.parent_tree(repo.as_ref())?,
+                &target_commit.parent_tree(repo.as_ref()).await?,
                 &target_commit.tree(),
             ],
         )?;
@@ -265,7 +265,7 @@ struct ResolvedSplitArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_split(
+pub(crate) async fn cmd_split(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &SplitArgs,
@@ -279,12 +279,12 @@ pub(crate) fn cmd_split(
         use_move_flags,
         new_parent_ids,
         new_child_ids,
-    } = args.resolve(ui, &workspace_command)?;
+    } = args.resolve(ui, &workspace_command).await?;
     let text_editor = workspace_command.text_editor()?;
     let mut tx = workspace_command.start_transaction();
 
     // Prompt the user to select the changes they want for the first commit.
-    let target = select_diff(ui, &tx, &target_commit, &matcher, &diff_selector)?;
+    let target = select_diff(ui, &tx, &target_commit, &matcher, &diff_selector).await?;
 
     // Create the first commit, which includes the changes selected by the user.
     let first_commit = {
@@ -314,7 +314,7 @@ pub(crate) fn cmd_split(
         };
         let description = if use_editor {
             commit_builder.set_description(description);
-            let temp_commit = commit_builder.write_hidden().block_on()?;
+            let temp_commit = commit_builder.write_hidden().await?;
             let intro = "Enter a description for the selected changes.";
             let template = description_template(ui, &tx, intro, &temp_commit)?;
             edit_description(&text_editor, &template)?
@@ -322,7 +322,7 @@ pub(crate) fn cmd_split(
             description
         };
         commit_builder.set_description(description);
-        commit_builder.write(tx.repo_mut()).block_on()?
+        commit_builder.write(tx.repo_mut()).await?
     };
 
     // Create the second commit, which includes everything the user didn't
@@ -345,7 +345,7 @@ pub(crate) fn cmd_split(
                 ),
                 [selected_diff.invert()],
             ))
-            .block_on()?
+            .await?
         } else {
             target_tree
         };
@@ -375,7 +375,7 @@ pub(crate) fn cmd_split(
         let description = if show_editor {
             let new_description = add_trailers(ui, &tx, &commit_builder)?;
             commit_builder.set_description(new_description);
-            let temp_commit = commit_builder.write_hidden().block_on()?;
+            let temp_commit = commit_builder.write_hidden().await?;
             let intro = "Enter a description for the remaining changes.";
             let template = description_template(ui, &tx, intro, &temp_commit)?;
             edit_description(&text_editor, &template)?
@@ -383,7 +383,7 @@ pub(crate) fn cmd_split(
             description
         };
         commit_builder.set_description(description);
-        commit_builder.write(tx.repo_mut()).block_on()?
+        commit_builder.write(tx.repo_mut()).await?
     };
 
     let (first_commit, second_commit, num_rebased) = if use_move_flags {
@@ -394,9 +394,10 @@ pub(crate) fn cmd_split(
             second_commit,
             new_parent_ids,
             new_child_ids,
-        )?
+        )
+        .await?
     } else {
-        rewrite_descendants(&mut tx, &target, first_commit, second_commit, parallel)?
+        rewrite_descendants(&mut tx, &target, first_commit, second_commit, parallel).await?
     };
     if let Some(mut formatter) = ui.status_formatter() {
         if num_rebased > 0 {
@@ -412,8 +413,8 @@ pub(crate) fn cmd_split(
     Ok(())
 }
 
-fn move_first_commit(
-    tx: &mut WorkspaceCommandTransaction,
+async fn move_first_commit(
+    tx: &mut WorkspaceCommandTransaction<'_>,
     target: &CommitWithSelection,
     mut first_commit: Commit,
     mut second_commit: Commit,
@@ -423,13 +424,16 @@ fn move_first_commit(
     let mut rewritten_commits: HashMap<CommitId, CommitId> = HashMap::new();
     rewritten_commits.insert(target.commit.id().clone(), second_commit.id().clone());
     tx.repo_mut()
-        .transform_descendants(vec![target.commit.id().clone()], async |rewriter| {
-            let old_commit_id = rewriter.old_commit().id().clone();
-            let new_commit = rewriter.rebase().await?.write().await?;
-            rewritten_commits.insert(old_commit_id, new_commit.id().clone());
-            Ok(())
-        })
-        .block_on()?;
+        .transform_descendants(
+            vec![target.commit.id().clone()],
+            async |rewriter: CommitRewriter<'_>| {
+                let old_commit_id = rewriter.old_commit().id().clone();
+                let new_commit = rewriter.rebase().await?.write().await?;
+                rewritten_commits.insert(old_commit_id, new_commit.id().clone());
+                Ok(())
+            },
+        )
+        .await?;
 
     let new_parent_ids: Vec<_> = new_parent_ids
         .iter()
@@ -455,7 +459,8 @@ fn move_first_commit(
             },
             simplify_ancestor_merge: false,
         },
-    )?;
+    )
+    .await?;
 
     // 1 for the transformation of the original commit to the second commit
     // that was inserted in rewritten_commits
@@ -480,8 +485,8 @@ fn move_first_commit(
     Ok((first_commit, second_commit, num_rebased))
 }
 
-fn rewrite_descendants(
-    tx: &mut WorkspaceCommandTransaction,
+async fn rewrite_descendants(
+    tx: &mut WorkspaceCommandTransaction<'_>,
     target: &CommitWithSelection,
     first_commit: Commit,
     second_commit: Commit,
@@ -497,28 +502,32 @@ fn rewrite_descendants(
     }
     let mut num_rebased = 0;
     tx.repo_mut()
-        .transform_descendants(vec![target.commit.id().clone()], async |mut rewriter| {
-            num_rebased += 1;
-            if parallel && legacy_bookmark_behavior {
-                // The old_parent is the second commit due to the rewrite above.
-                rewriter
-                    .replace_parent(second_commit.id(), [first_commit.id(), second_commit.id()]);
-            } else if parallel {
-                rewriter.replace_parent(first_commit.id(), [first_commit.id(), second_commit.id()]);
-            } else {
-                rewriter.replace_parent(first_commit.id(), [second_commit.id()]);
-            }
-            rewriter.rebase().await?.write().await?;
-            Ok(())
-        })
-        .block_on()?;
+        .transform_descendants(
+            vec![target.commit.id().clone()],
+            async |mut rewriter: CommitRewriter<'_>| {
+                num_rebased += 1;
+                if parallel && legacy_bookmark_behavior {
+                    // The old_parent is the second commit due to the rewrite above.
+                    rewriter.replace_parent(
+                        second_commit.id(),
+                        [first_commit.id(), second_commit.id()],
+                    );
+                } else if parallel {
+                    rewriter
+                        .replace_parent(first_commit.id(), [first_commit.id(), second_commit.id()]);
+                } else {
+                    rewriter.replace_parent(first_commit.id(), [second_commit.id()]);
+                }
+                rewriter.rebase().await?.write().await?;
+                Ok(())
+            },
+        )
+        .await?;
     // Move the working copy commit (@) to the second commit for any workspaces
     // where the target commit is the working copy commit.
     for (name, working_copy_commit) in tx.base_repo().clone().view().wc_commit_ids() {
         if working_copy_commit == target.commit.id() {
-            tx.repo_mut()
-                .edit(name.clone(), &second_commit)
-                .block_on()?;
+            tx.repo_mut().edit(name.clone(), &second_commit).await?;
         }
     }
 
@@ -527,9 +536,9 @@ fn rewrite_descendants(
 
 /// Prompts the user to select the content they want in the first commit and
 /// returns the target commit and the tree corresponding to the selection.
-fn select_diff(
+async fn select_diff(
     ui: &Ui,
-    tx: &WorkspaceCommandTransaction,
+    tx: &WorkspaceCommandTransaction<'_>,
     target_commit: &Commit,
     matcher: &dyn Matcher,
     diff_selector: &DiffSelector,
@@ -548,7 +557,7 @@ The changes that are not selected will replace the original commit.
             tx.format_commit_summary(target_commit)
         )
     };
-    let parent_tree = target_commit.parent_tree(tx.repo())?;
+    let parent_tree = target_commit.parent_tree(tx.repo()).await?;
     let selected_tree = diff_selector.select(
         ui,
         Diff::new(&parent_tree, &target_commit.tree()),

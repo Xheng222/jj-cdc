@@ -16,7 +16,6 @@ use clap_complete::ArgValueCompleter;
 use jj_lib::backend::TreeValue;
 use jj_lib::merged_tree_builder::MergedTreeBuilder;
 use jj_lib::object_id::ObjectId as _;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -59,7 +58,7 @@ pub(crate) struct FileChmodArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_file_chmod(
+pub(crate) async fn cmd_file_chmod(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &FileChmodArgs,
@@ -115,12 +114,12 @@ pub(crate) fn cmd_file_chmod(
         tree_builder.set_or_remove(repo_path, tree_value);
     }
 
-    let new_tree = tree_builder.write_tree().block_on()?;
+    let new_tree = tree_builder.write_tree().await?;
     tx.repo_mut()
         .rewrite_commit(&commit)
         .set_tree(new_tree)
         .write()
-        .block_on()?;
+        .await?;
     tx.finish(
         ui,
         format!(

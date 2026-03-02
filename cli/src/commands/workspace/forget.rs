@@ -30,9 +30,8 @@ use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::repo::Repo as _;
 use jj_lib::workspace_store::SimpleWorkspaceStore;
 use jj_lib::workspace_store::WorkspaceStore as _;
-use pollster::FutureExt as _;
 #[cfg(feature = "git")]
-use prost::Message as _;
+use prost::Message;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -72,7 +71,7 @@ pub struct WorkspaceForgetArgs {
 }
 
 #[instrument(skip_all)]
-pub fn cmd_workspace_forget(
+pub async fn cmd_workspace_forget(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &WorkspaceForgetArgs,
@@ -130,7 +129,7 @@ pub fn cmd_workspace_forget(
     let mut tx = workspace_command.start_transaction();
 
     for ws in &forget_ws {
-        tx.repo_mut().remove_wc_commit(ws).block_on()?;
+        tx.repo_mut().remove_wc_commit(ws).await?;
     }
 
     workspace_store.forget(&forget_ws.iter().map(|x| x.as_ref()).collect::<Vec<_>>())?;

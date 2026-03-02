@@ -919,6 +919,43 @@ mod tests {
     }
 
     #[test]
+    fn test_color_for_hex() {
+        assert_eq!(
+            color_for_hex("#000000"),
+            Some(Color::Rgb { r: 0, g: 0, b: 0 })
+        );
+        assert_eq!(
+            color_for_hex("#fab123"),
+            Some(Color::Rgb {
+                r: 0xfa,
+                g: 0xb1,
+                b: 0x23
+            })
+        );
+        assert_eq!(
+            color_for_hex("#F00D13"),
+            Some(Color::Rgb {
+                r: 0xf0,
+                g: 0x0d,
+                b: 0x13
+            })
+        );
+        assert_eq!(
+            color_for_hex("#ffffff"),
+            Some(Color::Rgb {
+                r: 255,
+                g: 255,
+                b: 255
+            })
+        );
+
+        assert_eq!(color_for_hex("000000"), None);
+        assert_eq!(color_for_hex("0000000"), None);
+        assert_eq!(color_for_hex("#00000g"), None);
+        assert_eq!(color_for_hex("#á00000"), None);
+    }
+
+    #[test]
     fn test_color_formatter_ansi256() {
         let config = config_from_string(
             r#"
@@ -1071,6 +1108,7 @@ mod tests {
             [colors]
             not_bold = { fg = 'red', bg = 'blue', italic = true, underline = true }
             bold_font = { bold = true }
+            stop_bold = { bold = false }
         "});
         let mut output: Vec<u8> = vec![];
         let mut formatter = ColorFormatter::for_config(&mut output, &config, false).unwrap();
@@ -1078,13 +1116,17 @@ mod tests {
         write!(formatter, " not bold ").unwrap();
         formatter.push_label("bold_font");
         write!(formatter, " bold ").unwrap();
+        formatter.push_label("stop_bold");
+        write!(formatter, " stop bold ").unwrap();
+        formatter.pop_label();
+        write!(formatter, " bold again ").unwrap();
         formatter.pop_label();
         write!(formatter, " not bold again ").unwrap();
         formatter.pop_label();
         drop(formatter);
         insta::assert_snapshot!(
             to_snapshot_string(output),
-            @"[3m[4m[38;5;1m[48;5;4m not bold [1m bold [0m[3m[4m[38;5;1m[48;5;4m not bold again [23m[24m[39m[49m[EOF]");
+            @"[3m[4m[38;5;1m[48;5;4m not bold [1m bold [0m[3m[4m[38;5;1m[48;5;4m stop bold [1m bold again [0m[3m[4m[38;5;1m[48;5;4m not bold again [23m[24m[39m[49m[EOF]");
     }
 
     #[test]
@@ -1094,6 +1136,7 @@ mod tests {
             [colors]
             not_dim = { fg = 'red', bg = 'blue', italic = true, underline = true }
             dim_font = { dim = true }
+            stop_dim = { dim = false }
         "});
         let mut output: Vec<u8> = vec![];
         let mut formatter = ColorFormatter::for_config(&mut output, &config, false).unwrap();
@@ -1101,13 +1144,17 @@ mod tests {
         write!(formatter, " not dim ").unwrap();
         formatter.push_label("dim_font");
         write!(formatter, " dim ").unwrap();
+        formatter.push_label("stop_dim");
+        write!(formatter, " stop dim ").unwrap();
+        formatter.pop_label();
+        write!(formatter, " dim again ").unwrap();
         formatter.pop_label();
         write!(formatter, " not dim again ").unwrap();
         formatter.pop_label();
         drop(formatter);
         insta::assert_snapshot!(
             to_snapshot_string(output),
-            @"[3m[4m[38;5;1m[48;5;4m not dim [2m dim [0m[3m[4m[38;5;1m[48;5;4m not dim again [23m[24m[39m[49m[EOF]");
+            @"[3m[4m[38;5;1m[48;5;4m not dim [2m dim [0m[3m[4m[38;5;1m[48;5;4m stop dim [2m dim again [0m[3m[4m[38;5;1m[48;5;4m not dim again [23m[24m[39m[49m[EOF]");
     }
 
     #[test]
@@ -1134,7 +1181,7 @@ mod tests {
     }
 
     #[test]
-    fn test_color_formatter_reset_on_flush() {
+    fn test_formatter_reset_on_flush() {
         let config = config_from_string("colors.red = 'red'");
         let mut output: Vec<u8> = vec![];
         let mut formatter = ColorFormatter::for_config(&mut output, &config, false).unwrap();
@@ -1160,6 +1207,23 @@ mod tests {
         drop(formatter);
         insta::assert_snapshot!(
             to_snapshot_string(output), @"[38;5;1mfoo[39m[38;5;1mbar[39m[EOF]");
+
+        // plaintext and sanitizing formatters produce no special behavior
+        let mut output: Vec<u8> = vec![];
+        let mut formatter = PlainTextFormatter::new(&mut output);
+        formatter.push_label("red");
+        write!(formatter, "foo").unwrap();
+        formatter.pop_label();
+        formatter.flush().unwrap();
+        insta::assert_snapshot!(to_snapshot_string(formatter.output.clone()), @"foo[EOF]");
+
+        let mut output: Vec<u8> = vec![];
+        let mut formatter = SanitizingFormatter::new(&mut output);
+        formatter.push_label("red");
+        write!(formatter, "foo").unwrap();
+        formatter.pop_label();
+        formatter.flush().unwrap();
+        insta::assert_snapshot!(to_snapshot_string(formatter.output.clone()), @"foo[EOF]");
     }
 
     #[test]
@@ -1455,9 +1519,17 @@ mod tests {
         write!(formatter, " inside ").unwrap();
         formatter.pop_label();
         formatter.pop_label();
+        // Matching debug styles are not separated.
+        formatter.push_label("outer");
+        formatter.push_label("inner");
+        write!(formatter, " inside two ").unwrap();
+        formatter.pop_label();
+        formatter.pop_label();
         drop(formatter);
         insta::assert_snapshot!(
-            to_snapshot_string(output), @"[38;5;2m<<outer inner:: inside >>[39m[EOF]");
+            to_snapshot_string(output),
+            @"[38;5;2m<<outer inner:: inside  inside two >>[39m[EOF]",
+        );
     }
 
     #[test]

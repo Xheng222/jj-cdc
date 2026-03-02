@@ -168,6 +168,10 @@ while_let_loop = "warn"
 let_underscore_drop = "warn"
 redundant_imports = "warn"
 
+[profile.dev]
+# Opt-level 0 tends to run out of stack on Windows when running async code
+opt-level = 1
+
 [profile.dev.package]
 # Insta suggests compiling these packages in opt mode for faster testing.
 # See https://docs.rs/insta/latest/insta/#optional-faster-runs.

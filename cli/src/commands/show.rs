@@ -15,7 +15,6 @@
 use clap_complete::ArgValueCandidates;
 use clap_complete::ArgValueCompleter;
 use jj_lib::matchers::EverythingMatcher;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -64,7 +63,7 @@ pub(crate) struct ShowArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_show(
+pub(crate) async fn cmd_show(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &ShowArgs,
@@ -91,7 +90,7 @@ pub(crate) fn cmd_show(
     if !args.no_patch {
         diff_renderer
             .show_patch(ui, formatter, &commit, &EverythingMatcher, ui.term_width())
-            .block_on()?;
+            .await?;
     }
     Ok(())
 }

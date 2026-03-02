@@ -16,7 +16,6 @@ use std::slice;
 
 use clap::ArgGroup;
 use clap_complete::ArgValueCompleter;
-use pollster::FutureExt as _;
 use tracing::instrument;
 
 use crate::cli_util::CommandHelper;
@@ -81,7 +80,7 @@ pub(crate) struct InterdiffArgs {
 }
 
 #[instrument(skip_all)]
-pub(crate) fn cmd_interdiff(
+pub(crate) async fn cmd_interdiff(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &InterdiffArgs,
@@ -101,9 +100,9 @@ pub(crate) fn cmd_interdiff(
         &fileset_expression,
         // We check the parent commits to account for deleted files.
         [
-            &from.parent_tree(repo.as_ref())?,
+            &from.parent_tree(repo.as_ref()).await?,
             &from.tree(),
-            &to.parent_tree(repo.as_ref())?,
+            &to.parent_tree(repo.as_ref()).await?,
             &to.tree(),
         ],
     )?;
@@ -119,6 +118,6 @@ pub(crate) fn cmd_interdiff(
             matcher.as_ref(),
             ui.term_width(),
         )
-        .block_on()?;
+        .await?;
     Ok(())
 }

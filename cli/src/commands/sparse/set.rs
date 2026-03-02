@@ -53,7 +53,7 @@ pub struct SparseSetArgs {
 }
 
 #[instrument(skip_all)]
-pub fn cmd_sparse_set(
+pub async fn cmd_sparse_set(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &SparseSetArgs,
@@ -72,4 +72,5 @@ pub fn cmd_sparse_set(
         }
         Ok(new_patterns.into_iter().sorted_unstable().collect())
     })
+    .await
 }

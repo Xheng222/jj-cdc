@@ -20,7 +20,6 @@ use jj_lib::commit::CommitIteratorExt as _;
 use jj_lib::repo::Repo as _;
 use jj_lib::revset::RevsetIteratorExt as _;
 use jj_lib::signing::SignBehavior;
-use pollster::FutureExt as _;
 
 use crate::cli_util::CommandHelper;
 use crate::cli_util::RevisionArg;
@@ -43,7 +42,7 @@ pub struct UnsignArgs {
     revisions: Vec<RevisionArg>,
 }
 
-pub fn cmd_unsign(
+pub async fn cmd_unsign(
     ui: &mut Ui,
     command: &CommandHelper,
     args: &UnsignArgs,
@@ -91,7 +90,7 @@ pub fn cmd_unsign(
                 Ok(())
             },
         )
-        .block_on()?;
+        .await?;
 
     if let Some(mut formatter) = ui.status_formatter()
         && !unsigned_commits.is_empty()
