@@ -10,8 +10,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Release highlights
 
+### Breaking changes
+
+### Deprecations
+
+### New features
+
+### Fixed bugs
+
+## [0.39.0] - 2026-03-04
+
+### Release highlights
+
 * `jj arrange` command brings up a TUI where you can reorder and abandon
   revisions. [#1531](https://github.com/jj-vcs/jj/issues/1531)
+
+* `jj bookmark advance` automatically moves bookmarks forward to a
+  target revision (defaults to `@`) using customization points
+  `revsets.bookmark-advance-from` and `revsets.bookmark-advance-to`.
+  It is heavily inspired by the longstanding community alias `jj tug`.
 
 ### Breaking changes
 
@@ -33,16 +50,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New features
 
-* `jj new` now evaluates the `new_description` template to populate the
-  initial commit description when no `-m` message is provided.
-
 * Add support for push options in `jj git push` with the `--option` flag.
   This allows users to pass options to the remote server when pushing commits.
   The short alias `-o` is also supported.
 
+* `jj new` now evaluates the `new_description` template to populate the
+  initial commit description when no `-m` message is provided.
+
 * Templates now support `first()`, `last()`, `get(index)`, `reverse()`,
   `skip(count)`, and `take(count)` methods on list types for more flexible
   list manipulation.
+
+* New `builtin_draft_commit_description_with_diff` template that includes the
+  diff in the commit description editor, making it easier to review changes
+  while writing commit messages.
 
 * Revsets and templates now support `name:x` pattern aliases such as `'grep:x' =
   'description(regex:x)'`.
@@ -94,24 +115,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   trailer `Link`, and will generate a `Link: <review-url>/id/<change-id>` trailer
   if `gerrit.review-url` option is set.
 
-* New `builtin_draft_commit_description_with_diff` template that includes the
-  diff in the commit description editor, making it easier to review changes
-  while writing commit messages.
-
 * `jj gerrit upload` no longer requires the `-r` flag, and will default to
   uploading what you're currently working on.
-
-* New command `jj bookmark advance` automatically moves bookmarks forward to a
-  target revision (defaults to `@`). With customization points
-  `revsets.bookmark-advance-from` and `revsets.bookmark-advance-to`.
-  The command is heavily inspired by the longstanding community alias `jj tug`.
 
 * Templates now support `Serialize` operations on the result of `map()` and
   `if()`, when supported by the underlying type.
 
+* New `diff_lines_added()` and `diff_lines_removed()` revset functions for
+  matching content on only one side of a diff.
+
 * `jj bookmark rename` now supports `--overwrite-existing` to allow renaming a
   bookmark even if the new name already exists, effectively replacing the
   existing bookmark.
+
+* Conditional configuration based on environment variables with `--when.environments`.
+  [#8779](https://github.com/jj-vcs/jj/pull/8779)
 
 ### Fixed bugs
 
@@ -121,6 +139,47 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 * `jj` now safely detaches the `HEAD` of alternate Git worktrees if their
   checked-out branch is moved or deleted during Git export.
+
+* `jj file track --include-ignored` now works when `fsmonitor.backend="watchman"`.
+  [#8427](https://github.com/jj-vcs/jj/issues/8427)
+
+### Contributors
+
+Thanks to the people who made this release happen!
+
+* Aaron Christiansen (@AaronC81)
+* Andy Brenneke (@abrenneke)
+* Anton Älgmyr (@algmyr)
+* Austin Seipp (@thoughtpolice)
+* Benjamin Tan (@bnjmnt4n)
+* Bram Geron (@bgeron)
+* Bryce Berger (@bryceberger)
+* Caleb White (@calebdw)
+* countskm (@countdigi)
+* David Higgs (@higgsd)
+* Evan Simmons (@estk)
+* Fedor Sheremetyev (@sheremetyev)
+* Gaëtan Lehmann (@glehmann)
+* George Christou (@gechr)
+* Hubert Lefevre (@Paluche)
+* Ian (@chronologos)
+* Ilya Grigoriev (@ilyagr)
+* Jaen (@jaens)
+* Joseph Lou (@josephlou5)
+* Josh Steadmon (@steadmon)
+* Martin von Zweigbergk (@martinvonz)
+* Matt Kulukundis (@fowles)
+* Matt Stark (@matts1)
+* max (@pr2502)
+* Nika Layzell (@mystor)
+* Philip Metzger (@PhilipMetzger)
+* Richard Smith (@zygoloid)
+* Scott Taylor (@scott2000)
+* Steve Klabnik (@steveklabnik)
+* Theodore Dubois (@tbodt)
+* William Phetsinorath (@shikanime)
+* xtqqczze (@xtqqczze)
+* Yuya Nishihara (@yuja)
 
 ## [0.38.0] - 2026-02-04
 
@@ -232,9 +291,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 * `jj gerrit upload` will no longer swallow errors and surface if changes fail
   to get pushed to gerrit.
   [#8568](https://github.com/jj-vcs/jj/issues/8568)
-
-* `jj file track --include-ignored` now works when `fsmonitor.backend="watchman"`.
-  [#8427](https://github.com/jj-vcs/jj/issues/8427)
 
 * Conflict labels are now preserved correctly when restoring files from commits
   with different conflict labels.
@@ -4825,7 +4881,8 @@ No changes, only trying to get the automated build to work.
 
 Last release before this changelog started.
 
-[unreleased]: https://github.com/jj-vcs/jj/compare/v0.38.0...HEAD
+[unreleased]: https://github.com/jj-vcs/jj/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/jj-vcs/jj/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/jj-vcs/jj/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/jj-vcs/jj/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/jj-vcs/jj/compare/v0.35.0...v0.36.0

@@ -2031,7 +2031,7 @@ to the current parents may contain changes from multiple commits.
             // Rebase descendants
             let num_rebased = mut_repo
                 .rebase_descendants()
-                .block_on()
+                .await
                 .map_err(snapshot_command_error)?;
             if num_rebased > 0 {
                 writeln!(
@@ -2121,8 +2121,7 @@ to the current parents may contain changes from multiple commits.
             write!(formatter, "Working copy  (@) now at: ")?;
             template.format(new_commit, formatter.as_mut())?;
             writeln!(formatter)?;
-            for parent in new_commit.parents() {
-                let parent = parent?;
+            for parent in new_commit.parents().block_on()? {
                 //                "Working copy  (@) now at: "
                 write!(formatter, "Parent commit (@-)      : ")?;
                 template.format(&parent, formatter.as_mut())?;

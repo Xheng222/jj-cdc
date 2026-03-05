@@ -124,12 +124,14 @@ pub(crate) async fn cmd_arrange(
     let mut state = State::new(commits, external_children);
     state.update_commit_order();
 
-    let result = run_tui(
-        ui,
-        &mut terminal,
-        &workspace_command.commit_summary_template(),
-        state,
-    );
+    let template_string = workspace_command
+        .settings()
+        .get_string("templates.arrange")?;
+    let template = workspace_command
+        .parse_commit_template(ui, &template_string)?
+        .labeled(["commit"]);
+
+    let result = run_tui(ui, &mut terminal, template, state);
 
     // Restore the terminal
     disable_raw_mode()?;
@@ -137,7 +139,8 @@ pub(crate) async fn cmd_arrange(
 
     if let Some(new_state) = result? {
         let mut tx = workspace_command.start_transaction();
-        new_state.apply_changes(tx.repo_mut()).await?;
+        let rewrites = new_state.to_rewrite_plan();
+        rewrites.execute(tx.repo_mut()).await?;
         tx.finish(ui, "arrange revisions")?;
         Ok(())
     } else {
@@ -145,7 +148,8 @@ pub(crate) async fn cmd_arrange(
     }
 }
 
-enum Action {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum UiAction {
     Abandon,
     Keep,
 }
@@ -161,7 +165,7 @@ struct State {
     current_order: Vec<CommitId>,
     // The current selection as an index into `current_order`
     current_selection: usize,
-    actions: HashMap<CommitId, Action>,
+    actions: HashMap<CommitId, UiAction>,
     parents: HashMap<CommitId, Vec<CommitId>>,
     external_children: HashMap<CommitId, Commit>,
 }
@@ -175,7 +179,7 @@ impl State {
         let actions = commits
             .iter()
             .chain(external_children.iter())
-            .map(|commit| (commit.id().clone(), Action::Keep))
+            .map(|commit| (commit.id().clone(), UiAction::Keep))
             .collect();
         let commits: HashMap<CommitId, Commit> = commits
             .into_iter()
@@ -293,21 +297,64 @@ impl State {
         self.parents.insert(b_id.clone(), a_parents);
     }
 
-    async fn apply_changes(
+    fn to_rewrite_plan(&self) -> RewritePlan {
+        let mut rewrites = HashMap::new();
+        for (id, action) in &self.actions {
+            let commit = self
+                .commits
+                .get(id)
+                .or_else(|| self.external_children.get(id))
+                .expect("actions should only contain commits in commits or external_children");
+            let parents = self.parents.get(id).unwrap();
+            rewrites.insert(
+                id.clone(),
+                Rewrite {
+                    old_commit: commit.clone(),
+                    new_parents: parents.clone(),
+                    action: match action {
+                        UiAction::Abandon => RewriteAction::Abandon,
+                        UiAction::Keep => RewriteAction::Keep,
+                    },
+                },
+            );
+        }
+        RewritePlan { rewrites }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum RewriteAction {
+    Abandon,
+    Keep,
+}
+
+struct Rewrite {
+    old_commit: Commit,
+    new_parents: Vec<CommitId>,
+    action: RewriteAction,
+}
+
+struct RewritePlan {
+    rewrites: HashMap<CommitId, Rewrite>,
+}
+
+impl RewritePlan {
+    async fn execute(
         mut self,
         mut_repo: &mut MutableRepo,
     ) -> Result<HashMap<CommitId, Commit>, CommandError> {
         // Find order to rebase the commits. The order is determined by the new
         // parents.
         let ordered_commit_ids = dag_walk::topo_order_forward(
-            self.parents.keys().cloned(),
+            self.rewrites.keys().cloned(),
             |id| id.clone(),
             |id| {
-                self.parents
+                self.rewrites
                     .get(id)
                     .unwrap()
+                    .new_parents
                     .iter()
-                    .filter(|id| self.commits.contains_key(id))
+                    .filter(|id| self.rewrites.contains_key(id))
                     .cloned()
             },
             |_| panic!("cycle detected"),
@@ -316,17 +363,12 @@ impl State {
         // Rewrite the commits in the order determined above
         let mut rewritten_commits: HashMap<CommitId, Commit> = HashMap::new();
         for id in ordered_commit_ids {
-            let old_commit = self
-                .commits
-                .remove(&id)
-                .or_else(|| self.external_children.remove(&id))
-                .unwrap();
-            let new_parents = mut_repo.new_parents(self.parents.get(&id).unwrap());
-            let rewriter = CommitRewriter::new(mut_repo, old_commit, new_parents);
-            let action = self.actions.remove(rewriter.old_commit().id()).unwrap();
-            match action {
-                Action::Abandon => rewriter.abandon(),
-                Action::Keep => {
+            let rewrite = self.rewrites.remove(&id).unwrap();
+            let new_parents = mut_repo.new_parents(&rewrite.new_parents);
+            let rewriter = CommitRewriter::new(mut_repo, rewrite.old_commit, new_parents);
+            match rewrite.action {
+                RewriteAction::Abandon => rewriter.abandon(),
+                RewriteAction::Keep => {
                     if rewriter.parents_changed() {
                         let new_commit = rewriter.rebase().await?.write().await?;
                         rewritten_commits.insert(id, new_commit);
@@ -341,7 +383,7 @@ impl State {
 fn run_tui<B: ratatui::backend::Backend>(
     ui: &mut Ui,
     terminal: &mut Terminal<B>,
-    template: &TemplateRenderer<Commit>,
+    template: TemplateRenderer<Commit>,
     mut state: State,
 ) -> Result<Option<State>, CommandError> {
     let help_items = [
@@ -373,7 +415,7 @@ fn run_tui<B: ratatui::backend::Backend>(
                     .split(frame.area());
                 let main_area = layout[0];
                 let help_area = layout[1];
-                render(&state, ui, template, frame, main_area);
+                render(&state, ui, &template, frame, main_area);
                 frame.render_widget(&help_line, help_area);
             })
             .map_err(|e| internal_error(format!("Failed to draw TUI: {e}")))?;
@@ -387,7 +429,8 @@ fn run_tui<B: ratatui::backend::Backend>(
                 continue;
             }
             match (event.code, event.modifiers) {
-                (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                (KeyCode::Char('q'), KeyModifiers::NONE)
+                | (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                     return Ok(None);
                 }
                 (KeyCode::Char('c'), KeyModifiers::NONE) => {
@@ -405,11 +448,11 @@ fn run_tui<B: ratatui::backend::Backend>(
                 }
                 (KeyCode::Char('a'), KeyModifiers::NONE) => {
                     let id = state.current_order[state.current_selection].clone();
-                    state.actions.insert(id, Action::Abandon);
+                    state.actions.insert(id, UiAction::Abandon);
                 }
                 (KeyCode::Char('p'), KeyModifiers::NONE) => {
                     let id = state.current_order[state.current_selection].clone();
-                    state.actions.insert(id, Action::Keep);
+                    state.actions.insert(id, UiAction::Keep);
                 }
                 (KeyCode::Down | KeyCode::Char('J'), KeyModifiers::SHIFT) => {
                     if state.current_selection + 1 < state.commits.len()
@@ -490,8 +533,8 @@ fn render(
             })
             .collect_vec();
         let glyph = match action {
-            Action::Abandon => "×",
-            Action::Keep => "○",
+            UiAction::Abandon => "×",
+            UiAction::Keep => "○",
         };
         let graph_lines = row_renderer.next_row(id, edges, glyph.to_string(), "".to_string());
         let graph_text = Text::from(graph_lines);
@@ -504,8 +547,8 @@ fn render(
         frame.render_widget(graph_text, graph_area);
 
         let action_text = match action {
-            Action::Abandon => "abandon",
-            Action::Keep => "keep",
+            UiAction::Abandon => "abandon",
+            UiAction::Keep => "keep",
         };
         frame.render_widget(Text::from(action_text), action_area);
 
@@ -526,6 +569,23 @@ mod tests {
     use testutils::TestRepo;
 
     use super::*;
+
+    fn no_op_plan(commits: &[&Commit]) -> RewritePlan {
+        let rewrites = commits
+            .iter()
+            .map(|commit| {
+                (
+                    commit.id().clone(),
+                    Rewrite {
+                        old_commit: (*commit).clone(),
+                        new_parents: commit.parent_ids().to_vec(),
+                        action: RewriteAction::Keep,
+                    },
+                )
+            })
+            .collect();
+        RewritePlan { rewrites }
+    }
 
     #[test]
     fn test_update_commit_order_empty() {
@@ -671,23 +731,21 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_changes_reorder() {
+    fn test_execute_plan_reorder() {
         let test_repo = TestRepo::init();
         let store = test_repo.repo.store();
         let empty_tree = store.empty_merged_tree();
 
-        // Move A between C and D, let e follow:
-        //   f           f e
+        // Move A between C and D, let E follow:
+        //   F           F E
         //   |           |/
         // D C           A
         // |/            |
-        // B e    =>   D C
+        // B E    =>   D C
         // |/          |/
         // A           B
         // |           |
         // root        root
-        //
-        // Lowercase nodes are external to the set
         let mut tx = test_repo.repo.start_transaction();
         let mut create_commit = |parents| {
             tx.repo_mut()
@@ -700,28 +758,17 @@ mod tests {
         let commit_d = create_commit(vec![commit_b.id().clone()]);
         let commit_e = create_commit(vec![commit_a.id().clone()]);
         let commit_f = create_commit(vec![commit_c.id().clone()]);
+        let mut plan = no_op_plan(&[
+            &commit_a, &commit_b, &commit_c, &commit_d, &commit_e, &commit_f,
+        ]);
 
-        let mut state = State::new(
-            vec![
-                commit_d.clone(),
-                commit_c.clone(),
-                commit_b.clone(),
-                commit_a.clone(),
-            ],
-            vec![commit_f.clone(), commit_e.clone()],
-        );
+        // Update the plan with the new parents
+        plan.rewrites.get_mut(commit_a.id()).unwrap().new_parents = vec![commit_c.id().clone()];
+        plan.rewrites.get_mut(commit_b.id()).unwrap().new_parents =
+            vec![store.root_commit_id().clone()];
+        plan.rewrites.get_mut(commit_f.id()).unwrap().new_parents = vec![commit_a.id().clone()];
 
-        // Update parents and apply the changes.
-        state
-            .parents
-            .insert(commit_a.id().clone(), vec![commit_c.id().clone()]);
-        state
-            .parents
-            .insert(commit_b.id().clone(), vec![store.root_commit_id().clone()]);
-        state
-            .parents
-            .insert(commit_f.id().clone(), vec![commit_a.id().clone()]);
-        let rewritten = state.apply_changes(tx.repo_mut()).block_on().unwrap();
+        let rewritten = plan.execute(tx.repo_mut()).block_on().unwrap();
         tx.repo_mut().rebase_descendants().block_on().unwrap();
         assert_eq!(
             rewritten.keys().collect::<HashSet<_>>(),
@@ -749,13 +796,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_changes_abandon() {
+    fn test_execute_plan_abandon() {
         let test_repo = TestRepo::init();
         let store = test_repo.repo.store();
         let empty_tree = store.empty_merged_tree();
 
         // Move C onto A and abandon it:
-        // d           d
+        // D           D
         // |           |
         // C           C (abandoned)
         // |           |
@@ -764,8 +811,6 @@ mod tests {
         // A         A
         // |         |
         // root      root
-        //
-        // Lowercase nodes are external to the set
         let mut tx = test_repo.repo.start_transaction();
         let mut create_commit = |parents| {
             tx.repo_mut()
@@ -776,18 +821,16 @@ mod tests {
         let commit_b = create_commit(vec![commit_a.id().clone()]);
         let commit_c = create_commit(vec![commit_b.id().clone()]);
         let commit_d = create_commit(vec![commit_c.id().clone()]);
-
-        let mut state = State::new(
-            vec![commit_c.clone(), commit_b.clone(), commit_a.clone()],
-            vec![commit_d.clone()],
-        );
+        let mut plan = no_op_plan(&[&commit_a, &commit_b, &commit_c, &commit_d]);
 
         // Update parents and action, then apply the changes.
-        state
-            .parents
-            .insert(commit_c.id().clone(), vec![commit_a.id().clone()]);
-        state.actions.insert(commit_c.id().clone(), Action::Abandon);
-        let rewritten = state.apply_changes(tx.repo_mut()).block_on().unwrap();
+        *plan.rewrites.get_mut(commit_c.id()).unwrap() = Rewrite {
+            old_commit: commit_c.clone(),
+            new_parents: vec![commit_a.id().clone()],
+            action: RewriteAction::Abandon,
+        };
+
+        let rewritten = plan.execute(tx.repo_mut()).block_on().unwrap();
         tx.repo_mut().rebase_descendants().block_on().unwrap();
         assert_eq!(rewritten.keys().sorted().collect_vec(), vec![commit_d.id()]);
         let new_commit_d = rewritten.get(commit_d.id()).unwrap();
