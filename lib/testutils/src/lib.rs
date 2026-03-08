@@ -374,7 +374,10 @@ impl TestWorkspace {
         let mut locked_ws = self.workspace.start_working_copy_mutation().unwrap();
         let (tree, stats) = locked_ws.locked_wc().snapshot(options).block_on()?;
         // arbitrary operation id
-        locked_ws.finish(self.repo.op_id().clone()).unwrap();
+        locked_ws
+            .finish(self.repo.op_id().clone())
+            .block_on()
+            .unwrap();
         Ok((tree, stats))
     }
 
@@ -468,12 +471,12 @@ impl TestTreeBuilder {
     }
 
     pub fn write_single_tree(self) -> Tree {
-        let id = self.tree_builder.write_tree().unwrap();
+        let id = self.tree_builder.write_tree().block_on().unwrap();
         self.store.get_tree(RepoPathBuf::root(), &id).unwrap()
     }
 
     pub fn write_merged_tree(self) -> MergedTree {
-        let id = self.tree_builder.write_tree().unwrap();
+        let id = self.tree_builder.write_tree().block_on().unwrap();
         MergedTree::resolved(self.store, id)
     }
 }

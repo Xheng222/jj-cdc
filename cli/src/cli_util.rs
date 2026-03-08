@@ -26,6 +26,7 @@ use std::io::Write as _;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -600,7 +601,9 @@ impl CommandHelper {
                     locked_ws.locked_wc(),
                     &desired_wc_commit,
                     &repo,
-                )? {
+                )
+                .block_on()?
+                {
                     WorkingCopyFreshness::Fresh | WorkingCopyFreshness::Updated(_) => {
                         drop(locked_ws);
                         writeln!(
@@ -697,7 +700,7 @@ impl CommandHelper {
         repo_loader: &RepoLoader,
     ) -> Result<Operation, CommandError> {
         if let Some(op_str) = &self.data.global_args.at_operation {
-            Ok(op_walk::resolve_op_for_load(repo_loader, op_str)?)
+            Ok(op_walk::resolve_op_for_load(repo_loader, op_str).block_on()?)
         } else {
             op_heads_store::resolve_op_heads(
                 repo_loader.op_heads_store().as_ref(),
@@ -1282,14 +1285,11 @@ impl WorkspaceCommandHelper {
             .get_workspace_git_head(&workspace_name)
             .is_present();
         let mut tx = self.start_transaction();
-        let head_changed = jj_lib::git::import_head(tx.repo_mut(), &workspace_name)?;
-        if !head_changed {
-            // No change for this workspace's git HEAD
-            if tx.repo().has_changes() {
-                // Other worktree heads may have been imported
-                self.user_repo =
-                    ReadonlyUserRepo::new(tx.into_inner().commit("import git head").block_on()?);
-            }
+        jj_lib::git::import_head(tx.repo_mut(), &workspace_name).block_on()?;
+        if tx.repo().has_changes() {
+            // Other worktree heads may have been imported
+            self.user_repo =
+                ReadonlyUserRepo::new(tx.into_inner().commit("import git head").block_on()?);
             return Ok(());
         }
 
@@ -1325,7 +1325,9 @@ impl WorkspaceCommandHelper {
             locked_ws.locked_wc().reset(&wc_commit).block_on()?;
             tx.repo_mut().rebase_descendants().block_on()?;
             self.user_repo = ReadonlyUserRepo::new(tx.commit("import git head").block_on()?);
-            locked_ws.finish(self.user_repo.repo.op_id().clone())?;
+            locked_ws
+                .finish(self.user_repo.repo.op_id().clone())
+                .block_on()?;
             if old_workspace_git_head_present {
                 writeln!(
                     ui.status(),
@@ -1361,7 +1363,7 @@ impl WorkspaceCommandHelper {
         let remote_settings = self.settings().remote_settings()?;
         let import_options = load_git_import_options(ui, &git_settings, &remote_settings)?;
         let mut tx = self.start_transaction();
-        let stats = git::import_refs(tx.repo_mut(), &import_options)?;
+        let stats = git::import_refs(tx.repo_mut(), &import_options).block_on()?;
         print_git_import_stats_summary(ui, &stats)?;
         if !tx.repo().has_changes() {
             return Ok(());
@@ -1451,14 +1453,15 @@ operation that was subsequently lost (or was at least unavailable when you ran
 what the parent commits are supposed to be. That means that the diff compared
 to the current parents may contain changes from multiple commits.
 ",
-        )?;
+        )
+        .block_on()?;
 
         writeln!(
             ui.status(),
             "Created and checked out recovery commit {}",
             short_commit_hash(new_commit.id())
         )?;
-        locked_ws.finish(repo.op_id().clone())?;
+        locked_ws.finish(repo.op_id().clone()).block_on()?;
         self.user_repo = ReadonlyUserRepo::new(repo);
 
         self.maybe_snapshot_impl(ui)
@@ -1710,7 +1713,7 @@ to the current parents may contain changes from multiple commits.
     }
 
     pub fn resolve_single_op(&self, op_str: &str) -> Result<Operation, OpsetEvaluationError> {
-        op_walk::resolve_op_with_repo(self.repo(), op_str)
+        op_walk::resolve_op_with_repo(self.repo(), op_str).block_on()
     }
 
     /// Resolve a revset to a single revision. Return an error if the revset is
@@ -2087,6 +2090,7 @@ to the current parents may contain changes from multiple commits.
 
         locked_ws
             .finish(self.user_repo.repo.op_id().clone())
+            .await
             .map_err(snapshot_command_error)?;
         Ok(stats)
     }
@@ -2518,7 +2522,7 @@ pub fn export_working_copy_changes_to_git(
     new_tree: &MergedTree,
 ) -> Result<(), CommandError> {
     let repo = mut_repo.base_repo().as_ref();
-    jj_lib::git::update_intent_to_add(repo, old_tree, new_tree)?;
+    jj_lib::git::update_intent_to_add(repo, old_tree, new_tree).block_on()?;
     let stats = jj_lib::git::export_refs(mut_repo)?;
     print_git_export_stats(ui, &stats)?;
     Ok(())
@@ -2762,7 +2766,7 @@ fn handle_stale_working_copy(
         return Ok(None);
     };
     let old_op_id = locked_wc.old_operation_id().clone();
-    match WorkingCopyFreshness::check_stale(locked_wc, &wc_commit, &repo) {
+    match WorkingCopyFreshness::check_stale(locked_wc, &wc_commit, &repo).block_on() {
         Ok(WorkingCopyFreshness::Fresh) => Ok(Some((repo, wc_commit))),
         Ok(WorkingCopyFreshness::Updated(wc_operation)) => {
             let repo = repo
@@ -2839,7 +2843,7 @@ fn update_stale_working_copy(
                 err,
             )
         })?;
-    locked_ws.finish(op_id)?;
+    locked_ws.finish(op_id).block_on()?;
 
     Ok(stats)
 }
@@ -4003,6 +4007,73 @@ pub fn format_template<C: Clone>(ui: &Ui, arg: &C, template: &TemplateRenderer<C
     output.into_string_lossy()
 }
 
+// Like `BoxFuture<_>`, but doesn't require `Send`.
+type BoxedCliDispatchFuture<'a> = Pin<Box<dyn Future<Output = Result<(), CommandError>> + 'a>>;
+pub type BoxedAsyncCliDispatch<'a> = Box<dyn AsyncCliDispatch + 'a>;
+type BoxedAsyncCliDispatchHook<'a> = Box<dyn AsyncCliDispatchHook + 'a>;
+
+/// Object-safe trait for async command dispatch function.
+pub trait AsyncCliDispatch {
+    fn call<'a>(
+        self: Box<Self>,
+        ui: &'a mut Ui,
+        command_helper: &'a CommandHelper,
+    ) -> BoxedCliDispatchFuture<'a>
+    where
+        Self: 'a;
+}
+
+/// Object-safe trait for async command dispatch hook function.
+trait AsyncCliDispatchHook {
+    fn call<'a>(
+        self: Box<Self>,
+        ui: &'a mut Ui,
+        command_helper: &'a CommandHelper,
+        old_dispatch: BoxedAsyncCliDispatch<'a>,
+    ) -> BoxedCliDispatchFuture<'a>
+    where
+        Self: 'a;
+}
+
+/// Object-safe wrapper for async command dispatch function.
+struct AsyncCliDispatchFn<F>(F);
+
+impl<F> AsyncCliDispatch for AsyncCliDispatchFn<F>
+where
+    F: AsyncFnOnce(&mut Ui, &CommandHelper) -> Result<(), CommandError>,
+{
+    fn call<'a>(
+        self: Box<Self>,
+        ui: &'a mut Ui,
+        command_helper: &'a CommandHelper,
+    ) -> BoxedCliDispatchFuture<'a>
+    where
+        Self: 'a,
+    {
+        Box::pin((self.0)(ui, command_helper))
+    }
+}
+
+/// Object-safe wrapper for async command dispatch hook function.
+struct AsyncCliDispatchHookFn<F>(F);
+
+impl<F> AsyncCliDispatchHook for AsyncCliDispatchHookFn<F>
+where
+    F: AsyncFnOnce(&mut Ui, &CommandHelper, BoxedAsyncCliDispatch<'_>) -> Result<(), CommandError>,
+{
+    fn call<'a>(
+        self: Box<Self>,
+        ui: &'a mut Ui,
+        command_helper: &'a CommandHelper,
+        old_dispatch: BoxedAsyncCliDispatch<'a>,
+    ) -> BoxedCliDispatchFuture<'a>
+    where
+        Self: 'a,
+    {
+        Box::pin((self.0)(ui, command_helper, old_dispatch))
+    }
+}
+
 /// CLI command builder and runner.
 #[must_use]
 pub struct CliRunner<'a> {
@@ -4016,16 +4087,10 @@ pub struct CliRunner<'a> {
     revset_extensions: RevsetExtensions,
     commit_template_extensions: Vec<Arc<dyn CommitTemplateLanguageExtension>>,
     operation_template_extensions: Vec<Arc<dyn OperationTemplateLanguageExtension>>,
-    dispatch_fn: CliDispatchFn<'a>,
-    dispatch_hook_fns: Vec<CliDispatchHookFn<'a>>,
+    dispatch: BoxedAsyncCliDispatch<'a>,
+    dispatch_hooks: Vec<BoxedAsyncCliDispatchHook<'a>>,
     process_global_args_fns: Vec<ProcessGlobalArgsFn<'a>>,
 }
-
-pub type CliDispatchFn<'a> =
-    Box<dyn FnOnce(&mut Ui, &CommandHelper) -> Result<(), CommandError> + 'a>;
-
-type CliDispatchHookFn<'a> =
-    Box<dyn FnOnce(&mut Ui, &CommandHelper, CliDispatchFn<'a>) -> Result<(), CommandError> + 'a>;
 
 type ProcessGlobalArgsFn<'a> =
     Box<dyn FnOnce(&mut Ui, &ArgMatches) -> Result<(), CommandError> + 'a>;
@@ -4047,10 +4112,8 @@ impl<'a> CliRunner<'a> {
             revset_extensions: Default::default(),
             commit_template_extensions: vec![],
             operation_template_extensions: vec![],
-            dispatch_fn: Box::new(|ui, command_helper| {
-                crate::commands::run_command(ui, command_helper).block_on()
-            }),
-            dispatch_hook_fns: vec![],
+            dispatch: Box::new(AsyncCliDispatchFn(crate::commands::run_command)),
+            dispatch_hooks: vec![],
             process_global_args_fns: vec![],
         };
         bind.version(env!("JJ_VERSION"))
@@ -4153,9 +4216,11 @@ impl<'a> CliRunner<'a> {
     /// run the command.
     pub fn add_dispatch_hook<F>(mut self, dispatch_hook_fn: F) -> Self
     where
-        F: FnOnce(&mut Ui, &CommandHelper, CliDispatchFn) -> Result<(), CommandError> + 'a,
+        F: AsyncFnOnce(&mut Ui, &CommandHelper, BoxedAsyncCliDispatch) -> Result<(), CommandError>
+            + 'a,
     {
-        self.dispatch_hook_fns.push(Box::new(dispatch_hook_fn));
+        self.dispatch_hooks
+            .push(Box::new(AsyncCliDispatchHookFn(dispatch_hook_fn)));
         self
     }
 
@@ -4163,18 +4228,18 @@ impl<'a> CliRunner<'a> {
     pub fn add_subcommand<C, F>(mut self, custom_dispatch_fn: F) -> Self
     where
         C: clap::Subcommand,
-        F: FnOnce(&mut Ui, &CommandHelper, C) -> Result<(), CommandError> + 'a,
+        F: AsyncFnOnce(&mut Ui, &CommandHelper, C) -> Result<(), CommandError> + 'a,
     {
-        let old_dispatch_fn = self.dispatch_fn;
+        let old_dispatch = self.dispatch;
         let new_dispatch_fn =
-            move |ui: &mut Ui, command_helper: &CommandHelper| match C::from_arg_matches(
+            async move |ui: &mut Ui, command_helper: &CommandHelper| match C::from_arg_matches(
                 command_helper.matches(),
             ) {
-                Ok(command) => custom_dispatch_fn(ui, command_helper, command),
-                Err(_) => old_dispatch_fn(ui, command_helper),
+                Ok(command) => custom_dispatch_fn(ui, command_helper, command).await,
+                Err(_) => old_dispatch.call(ui, command_helper).await,
             };
         self.app = C::augment_subcommands(self.app);
-        self.dispatch_fn = Box::new(new_dispatch_fn);
+        self.dispatch = Box::new(AsyncCliDispatchFn(new_dispatch_fn));
         self
     }
 
@@ -4195,7 +4260,11 @@ impl<'a> CliRunner<'a> {
     }
 
     #[instrument(skip_all)]
-    fn run_internal(self, ui: &mut Ui, mut raw_config: RawConfig) -> Result<(), CommandError> {
+    async fn run_internal(
+        self,
+        ui: &mut Ui,
+        mut raw_config: RawConfig,
+    ) -> Result<(), CommandError> {
         // `cwd` is canonicalized for consistency with `Workspace::workspace_root()` and
         // to easily compute relative paths between them.
         let cwd = env::current_dir()
@@ -4327,15 +4396,16 @@ impl<'a> CliRunner<'a> {
         let command_helper = CommandHelper {
             data: Rc::new(command_helper_data),
         };
-        let dispatch_fn = self.dispatch_hook_fns.into_iter().fold(
-            self.dispatch_fn,
-            |old_dispatch_fn, dispatch_hook_fn| {
-                Box::new(move |ui: &mut Ui, command_helper: &CommandHelper| {
-                    dispatch_hook_fn(ui, command_helper, old_dispatch_fn)
-                })
-            },
-        );
-        (dispatch_fn)(ui, &command_helper)
+        let dispatch =
+            self.dispatch_hooks
+                .into_iter()
+                .fold(self.dispatch, |old_dispatch, dispatch_hook| {
+                    let f = async move |ui: &mut Ui, command_helper: &CommandHelper| {
+                        dispatch_hook.call(ui, command_helper, old_dispatch).await
+                    };
+                    Box::new(AsyncCliDispatchFn(f))
+                });
+        dispatch.call(ui, &command_helper).await
     }
 
     #[must_use]
@@ -4348,7 +4418,7 @@ impl<'a> CliRunner<'a> {
         // If it had, the configuration will be fixed by the next ui.reset().
         let mut ui = Ui::with_config(config.as_ref())
             .expect("default config should be valid, env vars are stringly typed");
-        let result = self.run_internal(&mut ui, config);
+        let result = self.run_internal(&mut ui, config).block_on();
         let exit_code = handle_command_result(&mut ui, result);
         ui.finalize_pager();
         exit_code

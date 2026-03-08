@@ -215,7 +215,7 @@ async fn cmd_git_colocation_enable(
 
     // Finally, update git HEAD to point to the working-copy commit's parent
     let wc_commit = workspace_command.repo().store().get_commit(&wc_commit_id)?;
-    set_git_head_to_wc_parent(ui, &mut workspace_command, &wc_commit)?;
+    set_git_head_to_wc_parent(ui, &mut workspace_command, &wc_commit).await?;
 
     writeln!(
         ui.status(),
@@ -356,14 +356,14 @@ fn set_git_repo_bare(path: &std::path::Path, bare: bool) -> Result<(), CommandEr
 }
 
 /// Set the git HEAD to the working copy commit's parent
-fn set_git_head_to_wc_parent(
+async fn set_git_head_to_wc_parent(
     ui: &mut Ui,
     workspace_command: &mut crate::cli_util::WorkspaceCommandHelper,
     wc_commit: &Commit,
 ) -> Result<(), CommandError> {
     let workspace_name = workspace_command.workspace_name().to_owned();
     let mut tx = workspace_command.start_transaction();
-    git::reset_head(tx.repo_mut(), wc_commit, &workspace_name)?;
+    git::reset_head(tx.repo_mut(), wc_commit, &workspace_name).await?;
     if tx.repo().has_changes() {
         tx.finish(ui, "set git head to working copy parent")?;
     }

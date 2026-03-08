@@ -42,7 +42,11 @@
         # dependency, so it's worth it
         #
         # relevant PR: https://github.com/rust-lang/rust/pull/129687
-        extensions = ["rust-src" "rust-analyzer"];
+        extensions = [
+          "rust-src"
+          "rust-analyzer"
+          "llvm-tools-preview"
+        ];
       };
 
       # But, whenever we are running CI builds or checks, we want to use a
@@ -79,12 +83,14 @@
       devShells.default = let
         packages = with pkgs; [
           rustShellToolchain
+          llvmPackages.llvm # for e.g. llvm-symbolizer
 
           # Additional tools recommended by contributing.md
           bacon
           cargo-deny
           cargo-insta
           cargo-nextest
+          cargo-llvm-cov
 
           # Miscellaneous tools
           watchman

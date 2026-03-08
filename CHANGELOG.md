@@ -16,6 +16,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New features
 
+* New `diff_lines_added()` and `diff_lines_removed()` revset functions for
+  matching content on only one side of a diff.
+
+* The `end` parameter in the `String.substr(start, end)` templating method is
+  now optional. If not given, `substr()` returns from `start` to the end of the
+  string.
+
 ### Fixed bugs
 
 ## [0.39.0] - 2026-03-04
@@ -120,9 +127,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 * Templates now support `Serialize` operations on the result of `map()` and
   `if()`, when supported by the underlying type.
-
-* New `diff_lines_added()` and `diff_lines_removed()` revset functions for
-  matching content on only one side of a diff.
 
 * `jj bookmark rename` now supports `--overwrite-existing` to allow renaming a
   bookmark even if the new name already exists, effectively replacing the

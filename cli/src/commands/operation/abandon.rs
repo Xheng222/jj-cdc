@@ -64,23 +64,23 @@ pub async fn cmd_op_abandon(
     if command.global_args().at_operation.is_some() {
         return Err(cli_error("--at-op is not respected"));
     }
-    let current_head_ops = op_walk::get_current_head_ops(op_store, op_heads_store.as_ref())?;
+    let current_head_ops = op_walk::get_current_head_ops(op_store, op_heads_store.as_ref()).await?;
     let resolve_op = |op_str| op_walk::resolve_op_at(op_store, &current_head_ops, op_str);
     let (abandon_root_op, abandon_head_ops) =
         if let Some((root_op_str, head_op_str)) = args.operation.split_once("..") {
             let root_op = if root_op_str.is_empty() {
                 repo_loader.root_operation().await
             } else {
-                resolve_op(root_op_str)?
+                resolve_op(root_op_str).await?
             };
             let head_ops = if head_op_str.is_empty() {
                 current_head_ops.clone()
             } else {
-                vec![resolve_op(head_op_str)?]
+                vec![resolve_op(head_op_str).await?]
             };
             (root_op, head_ops)
         } else {
-            let op = resolve_op(&args.operation)?;
+            let op = resolve_op(&args.operation).await?;
             let parent_ops: Vec<_> = op.parents().try_collect()?;
             let parent_op = match parent_ops.len() {
                 0 => return Err(user_error("Cannot abandon the root operation")),
@@ -110,7 +110,8 @@ pub async fn cmd_op_abandon(
         &abandon_head_ops,
         &current_head_ops,
         &abandon_root_op,
-    )?;
+    )
+    .await?;
     assert_eq!(
         current_head_ops.len(),
         stats.new_head_ids.len(),
@@ -138,7 +139,7 @@ pub async fn cmd_op_abandon(
         let mut locked_ws = workspace.start_working_copy_mutation()?;
         let old_op_id = locked_ws.locked_wc().old_operation_id();
         if let Some((_, new_id)) = reparented_head_ops().find(|(old, _)| old.id() == old_op_id) {
-            locked_ws.finish(new_id.clone())?;
+            locked_ws.finish(new_id.clone()).await?;
         } else {
             writeln!(
                 ui.warning_default(),
