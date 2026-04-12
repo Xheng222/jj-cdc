@@ -5,7 +5,7 @@ use std::{
 
 use digest::{Digest, consts::U32};
 
-use crate::cdc::cdc_config::{LARGE_FILE_THRESHOLD, MAX_BINARY_FILE_HEAD_SIZE};
+use crate::cdc::cdc_config::{MAX_BINARY_FILE_HEAD_SIZE};
 
 /// 计算数据的 Hash
 pub fn calculate_hash(data: &[u8]) -> [u8; 32] {
@@ -15,13 +15,6 @@ pub fn calculate_hash(data: &[u8]) -> [u8; 32] {
 
 /// 判断文件是否为二进制文件
 pub fn is_binary_file(file: &mut File) -> bool {
-    // 如果大于 1M，直接视为二进制
-    if let Ok(meta) = file.metadata() {
-        if meta.len() > LARGE_FILE_THRESHOLD {
-            return true;
-        }
-    }
-
     // 读取头部
     let mut buffer = [0u8; MAX_BINARY_FILE_HEAD_SIZE];
     let n = match file.read(&mut buffer) {

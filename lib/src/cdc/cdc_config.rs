@@ -1,6 +1,5 @@
 // 常量
 pub const MAX_BINARY_FILE_HEAD_SIZE: usize = 1024 * 8;
-pub const LARGE_FILE_THRESHOLD: u64 = 1024 * 1024; // 1 MB
 pub const MAX_PACK_SIZE: u32 = 256 * 1024 * 1024; // 256 MB
 pub const BUFFER_SIZE: usize = 32 * 1024 * 1024; // 32 MB
 pub const CHUNK_AVG_SIZE: u32 = 16 * 1024; // 16 KB
