@@ -744,6 +744,27 @@ fn remove_old_file(disk_path: &Path) -> Result<bool, CheckoutError> {
     }
 }
 
+/// Removes existing submodule directory named `disk_path` if any. Returns
+/// `Ok(true)` if the directory was there and got removed, meaning that new file
+/// can be safely created.
+///
+/// The directory will not be removed if it is not empty, as it could contain
+/// untracked or modified files. This is in line with Git's behavior.
+fn remove_old_submodule_dir(disk_path: &Path) -> Result<bool, CheckoutError> {
+    match fs::remove_dir(disk_path) {
+        Ok(()) => Ok(true),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) if err.kind() == io::ErrorKind::DirectoryNotEmpty => Ok(false),
+        Err(err) => Err(CheckoutError::Other {
+            message: format!(
+                "Failed to remove submodule directory {}",
+                disk_path.display()
+            ),
+            err: err.into(),
+        }),
+    }
+}
+
 /// Checks if new file or symlink named `disk_path` can be created.
 ///
 /// If the file already exists, this function return `Ok(false)` to signal
@@ -1522,8 +1543,7 @@ impl FileSnapshotter<'_> {
             file_states,
         } = directory_to_visit;
 
-        let git_ignore = git_ignore
-            .chain_with_file(&dir.to_internal_dir_string(), disk_dir.join(".gitignore"))?;
+        let git_ignore = git_ignore.chain_with_file(&dir, disk_dir.join(".gitignore"))?;
         let dir_entries: Vec<_> = disk_dir
             .read_dir()
             .and_then(|entries| entries.try_collect())
@@ -1594,7 +1614,7 @@ impl FileSnapshotter<'_> {
                 }
             }
 
-            if git_ignore.matches(&path.to_internal_dir_string())
+            if git_ignore.matches_dir(&path)
                 && self.force_tracking_matcher.visit(&path).is_nothing()
             {
                 // If the whole directory is ignored by .gitignore, visit only
@@ -1624,8 +1644,7 @@ impl FileSnapshotter<'_> {
                 progress(&path);
             }
             if maybe_current_file_state.is_none()
-                && (git_ignore.matches(path.as_internal_file_string())
-                    && !self.force_tracking_matcher.matches(&path))
+                && (git_ignore.matches_file(&path) && !self.force_tracking_matcher.matches(&path))
             {
                 // If it wasn't already tracked and it matches
                 // the ignored paths, then ignore it.
@@ -2320,12 +2339,34 @@ impl TreeState {
             };
 
             // If the path was present, check reserved path first and delete it.
-            let present_file_deleted = before.is_present() && remove_old_file(&disk_path)?;
+            let present_file_deleted = before.is_present()
+                && if matches!(before.as_normal(), Some(TreeValue::GitSubmodule(_))) {
+                    remove_old_submodule_dir(&disk_path)?
+                } else {
+                    remove_old_file(&disk_path)?
+                };
+
             // If not, create temporary file to test the path validity.
             if !present_file_deleted && !can_create_new_file(&disk_path)? {
-                changed_file_states.push((path, FileState::placeholder()));
-                stats.skipped_files += 1;
-                return Ok(());
+                if matches!(after, MaterializedTreeValue::GitSubmodule(_)) && disk_path.is_dir() {
+                    // Failing to materialize submodule, over a directory which
+                    // is presumably the submodule before it was added in a
+                    // commit, is not an error.
+                    // Falling through to the "after" state code, to set the
+                    // correct file state.
+                } else if matches!(before.as_normal(), Some(TreeValue::GitSubmodule(_)))
+                    && after.is_absent()
+                {
+                    // Failing to delete un-tracked submodule directory is not
+                    // an error, as the, possibly untracked, contents would
+                    // otherwise be lost.
+                    // Falling through to the "after" state code in case there
+                    // are parents to be deleted.
+                } else {
+                    changed_file_states.push((path, FileState::placeholder()));
+                    stats.skipped_files += 1;
+                    return Ok(());
+                }
             }
 
             // We get the previous executable bit from the file states and not
@@ -2369,6 +2410,15 @@ impl TreeState {
                 }
                 MaterializedTreeValue::GitSubmodule(_) => {
                     eprintln!("ignoring git submodule at {path:?}");
+                    // Git behavior: Create the submodule directory but don't
+                    // populate/overwrite the contents.
+                    match fs::create_dir(&disk_path) {
+                        Ok(()) => {}
+                        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                        Err(err) => eprintln!(
+                            "warning: failed to create submodule directory {path:?}: {err}"
+                        ),
+                    }
                     FileState::for_gitsubmodule()
                 }
                 MaterializedTreeValue::Tree(_) => {
