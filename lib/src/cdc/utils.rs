@@ -28,41 +28,28 @@ pub fn is_binary_file(file: &mut File) -> bool {
         Err(_) => return true,
     }
 
-    let buffer = &buffer[..n];
-
-    // - 检查 NULL 字节
-    if buffer.contains(&0) {
-        return true;
-    }
-
-    // - 检查 UTF-8 编码
-    if String::from_utf8(buffer.to_vec()).is_ok() {
+    // 如果文件为空，认为它不是二进制文件
+    if n == 0 {
         return false;
     }
 
-    // - 检查 UTF-16 LE 或 UTF-16 BE 编码
-    if n > 2 && (buffer.starts_with(&[0xFF, 0xFE]) || buffer.starts_with(&[0xFE, 0xFF])) {
-        return false;
-    }
+    // 如果最后一个字节是 \r, 则去掉
+    let bytes = if buffer.get(n - 1) == Some(&b'\r') {
+        &buffer[0..n - 1]
+    } else {
+        &buffer[0..n]
+    };
 
-    // - 统计可打印 ASCII 字符
-    // let non_ascii_count = buffer.iter().filter(|&b| *b > 127).count();
-    let text_ascii_count = buffer
-        .iter()
-        .filter(|&b| {
-            (*b >= 0x20 && *b <= 0x7E)
-                || *b == 0x09
-                || *b == 0x0A
-                || *b == 0x0D
-                || *b == 0x0C
-                || *b == 0x08
-        })
-        .count();
-
-    // 如果可打印 ASCII 字符占比超过 70%，则认为是二进制文件
-    let text_ascii_ratio = text_ascii_count as f64 / n as f64;
-    if text_ascii_ratio > 0.7 {
-        return false;
+    // 判断是否包含 \0 或者 \r 后面不是 \n
+    let mut bytes = bytes.iter().peekable();
+    while let Some(byte) = bytes.next() {
+        match *byte {
+            b'\0' => return true,
+            b'\r' if bytes.peek() != Some(&&b'\n') => {
+                return true;
+            }
+            _ => {}
+        }
     }
-    return true;
+    return false;
 }
