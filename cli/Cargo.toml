@@ -133,11 +133,12 @@ testutils = { workspace = true }
 jj-cli = { path = ".", features = ["test-fakes"], default-features = false }
 
 [features]
-default = ["watchman", "git"]
+default = ["watchman", "git", "cdc"]
 bench = ["dep:criterion"]
 git = ["jj-lib/git", "dep:gix"]
 test-fakes = ["jj-lib/testing"]
 watchman = ["jj-lib/watchman"]
+cdc = []
 
 [package.metadata.binstall]
 # The archive name is jj, not jj-cli. Also, `cargo binstall` gets

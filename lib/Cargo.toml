@@ -98,10 +98,11 @@ tokio = { workspace = true, features = ["full"] }
 nix = { workspace = true, features = [ "fs" ] }
 
 [features]
-default = ["git"]
+default = ["git", "cdc"]
 git = ["dep:gix"]
 watchman = ["dep:watchman_client"]
 testing = ["git"]
+cdc = []
 
 [lints]
 workspace = true
