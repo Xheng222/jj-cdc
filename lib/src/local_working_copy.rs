@@ -985,6 +985,15 @@ impl TreeStateSettings {
             fsmonitor_settings: FsmonitorSettings::from_settings(user_settings)?,
         })
     }
+
+    pub async fn convert_eol_for_snapshot<'a>(
+        &self,
+        contents: impl AsyncRead + Send + Unpin + 'a,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>, std::io::Error> {
+        TargetEolStrategy::new(self.eol_conversion_mode)
+            .convert_eol_for_snapshot(contents)
+            .await
+    }
 }
 
 pub struct TreeState {
@@ -1863,7 +1872,11 @@ impl FileSnapshotter<'_> {
         materialized_conflict_data: Option<MaterializedConflictData>,
     ) -> Result<MergedTreeValue, SnapshotError> {
         if let Some(current_tree_value) = current_tree_values.as_resolved() {
-            let id = self.write_file_to_store(repo_path, disk_path).await?;
+            let previous_file_id = match current_tree_value {
+                Some(TreeValue::File { id, .. }) => Some(id),
+                _ => None
+            };
+            let id = self.write_file_to_store(repo_path, disk_path, previous_file_id).await?;
             // On Windows, we preserve the executable bit from the current tree.
             let executable = exec_bit.for_tree_value(self.tree_state.exec_policy, || {
                 if let Some(TreeValue::File {
@@ -1967,37 +1980,43 @@ impl FileSnapshotter<'_> {
         &self,
         path: &RepoPath,
         disk_path: &Path,
+        previous_file_id: Option<&FileId>,
     ) -> Result<FileId, SnapshotError> {
         let mut file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
         })?;
 
-        if let Some(cdc_backend_wrapper) =
-            self.store()
-                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
-            && crate::cdc::utils::is_binary_file(&mut file)
-        {
-            let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
-            let result = Ok(self
-                .store()
-                .write_file(path, &mut std::io::Cursor::new(pointer_content))
-                .await?);
+        #[cfg(feature = "cdc")]
+        if let Some(cdc_backend_wrapper) = self
+            .store()
+            .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>() {
 
-            result
-        } else {
-            let mut contents = self
-                .tree_state
-                .target_eol_strategy
-                .convert_eol_for_snapshot(BlockingAsyncReader::new(file))
-                .await
-                .map_err(|err| SnapshotError::Other {
-                    message: "Failed to convert the EOL".to_string(),
-                    err: err.into(),
-                })?;
+            let use_cdc = match previous_file_id {
+                Some(file_id) => cdc_backend_wrapper.is_stored_as_cdc(file_id)?,
+                None => crate::cdc::utils::is_binary_file(&mut file),
+            };
 
-            Ok(self.store().write_file(path, &mut contents).await?)
+            if use_cdc {
+                let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
+                return Ok(self
+                    .store()
+                    .write_file(path, &mut std::io::Cursor::new(pointer_content))
+                    .await?);
+            }
         }
+
+        let mut contents = self
+            .tree_state
+            .target_eol_strategy
+            .convert_eol_for_snapshot(BlockingAsyncReader::new(file))
+            .await
+            .map_err(|err| SnapshotError::Other {
+                message: "Failed to convert the EOL".to_string(),
+                err: err.into(),
+            })?;
+
+        Ok(self.store().write_file(path, &mut contents).await?)
     }
 
     async fn write_symlink_to_store(

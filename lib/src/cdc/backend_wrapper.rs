@@ -16,17 +16,12 @@ use tokio::io::AsyncRead;
 use crate::{
     backend::{
         Backend, BackendError, BackendResult, ChangeId, Commit, CommitId, CopyHistory, CopyId, CopyRecord, FileId, RelatedCopy, SigningFn, SymlinkId, Tree, TreeId
-    },
-    cdc::{
+    }, cdc::{
         cdc_config::CDC_POINTER_SIZE,
-        cdc_error::CdcResult,
+        cdc_error::{CdcError, CdcResult},
         pointer::CdcPointer,
         store_backend::{CdcStoreBackend, ChunkStoreBackend},
-    },
-    git_backend::{GitBackend, GitBackendLoadError},
-    index::Index,
-    repo_path::{RepoPath, RepoPathBuf},
-    settings::UserSettings,
+    }, git_backend::{GitBackend, GitBackendLoadError}, index::Index, object_id::ObjectId, repo_path::{RepoPath, RepoPathBuf}, settings::UserSettings
 };
 
 /// CDC backend wrapper
@@ -81,6 +76,27 @@ impl CdcBackendWrapper {
         self.get_store_backend()?
             .read_file(pointer_content, file)
             .await
+    }
+
+    pub fn is_stored_as_cdc(&self, id: &FileId) -> CdcResult<bool> {
+        let repo = self.git_backend.git_repo();
+        let oid = gix::ObjectId::from_bytes_or_panic(id.as_bytes());
+        let header = repo.try_find_header(oid).map_err(CdcError::from_git)?;
+        if let Some(header) = header {
+            if header.kind() != gix::objs::Kind::Blob {
+                return Ok(false);
+            }
+
+            if header.size() != CDC_POINTER_SIZE {
+                return Ok(false);
+            }
+
+            let object = repo.find_blob(oid).map_err(CdcError::from_git)?;
+            if CdcPointer::try_parse_from_bytes(&object.data).is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 

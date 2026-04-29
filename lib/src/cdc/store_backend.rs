@@ -123,7 +123,6 @@ impl CdcStoreBackend for ChunkStoreBackend {
 
     async fn read_file(&self, pointer: &CdcPointer, file: &File) -> CdcResult<usize> {
         let manifest = self.manifest_backend.read_manifest(pointer)?;
-        tracing::debug!("Manifest read: {:?} chunks", manifest);
 
         file.set_len(0)?;
         let mut output_writer = BufWriter::with_capacity(BUFFER_SIZE, file);
@@ -137,7 +136,6 @@ impl CdcStoreBackend for ChunkStoreBackend {
 
         let mut file_size = 0usize;
         let locations = self.chunk_backend.read_chunk_location(manifest)?;
-        tracing::debug!("locations read: {:?} chunks", locations);
 
         for location in locations {
             if !file_cache.contains_key(&location.pack_id) {
