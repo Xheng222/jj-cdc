@@ -28,6 +28,7 @@ use crate::backend::SymlinkId;
 use crate::backend::Tree;
 use crate::backend::TreeId;
 use crate::cdc::cdc_config::CDC_POINTER_SIZE;
+use crate::cdc::cdc_error::CdcError;
 use crate::cdc::cdc_error::CdcResult;
 use crate::cdc::pointer::CdcPointer;
 use crate::cdc::store_backend::CdcStoreBackend;
@@ -35,6 +36,7 @@ use crate::cdc::store_backend::ChunkStoreBackend;
 use crate::git_backend::GitBackend;
 use crate::git_backend::GitBackendLoadError;
 use crate::index::Index;
+use crate::object_id::ObjectId;
 use crate::repo_path::RepoPath;
 use crate::repo_path::RepoPathBuf;
 use crate::settings::UserSettings;
@@ -91,6 +93,27 @@ impl CdcBackendWrapper {
         self.get_store_backend()?
             .read_file(pointer_content, file)
             .await
+    }
+
+    pub fn is_stored_as_cdc(&self, id: &FileId) -> CdcResult<bool> {
+        let repo = self.git_backend.git_repo();
+        let oid = gix::ObjectId::from_bytes_or_panic(id.as_bytes());
+        let header = repo.try_find_header(oid).map_err(CdcError::from_git)?;
+        if let Some(header) = header {
+            if header.kind() != gix::objs::Kind::Blob {
+                return Ok(false);
+            }
+
+            if header.size() != CDC_POINTER_SIZE {
+                return Ok(false);
+            }
+
+            let object = repo.find_blob(oid).map_err(CdcError::from_git)?;
+            if CdcPointer::try_parse_from_bytes(&object.data).is_some() {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
