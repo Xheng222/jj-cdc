@@ -1,10 +1,9 @@
-
-
 use clap::Subcommand;
 use tracing::instrument;
 
-use crate::{cli_util::CommandHelper, command_error::CommandError, ui::Ui};
-
+use crate::cli_util::CommandHelper;
+use crate::command_error::CommandError;
+use crate::ui::Ui;
 
 #[derive(Subcommand, Clone, Debug)]
 pub(crate) enum CdcCommand {
@@ -23,7 +22,7 @@ pub struct CdcSetArgs {
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct CdcListArgs {
-    // No arguments needed for listing CDC sets, 
+    // No arguments needed for listing CDC sets,
     // but we can add options here in the future if needed
 }
 
@@ -66,10 +65,3 @@ async fn cmd_cdc_list(
     writeln!(ui.status(), "Listing CDC sets...")?;
     todo!()
 }
-
-
-
-
-
-
-

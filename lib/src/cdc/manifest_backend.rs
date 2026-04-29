@@ -1,12 +1,19 @@
-use std::{collections::HashSet, path::PathBuf, sync::RwLock};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::RwLock;
 
-use gix::{Id, ObjectId, Repository, ThreadSafeRepository};
+use gix::Id;
+use gix::ObjectId;
+use gix::Repository;
+use gix::ThreadSafeRepository;
 
-use crate::cdc::{
-    cdc_config::{HASH_LENGTH, MANIFEST_ANCHOR_REF, MANIFEST_GIT_DIR},
-    cdc_error::{CdcError, CdcResult},
-    pointer::{CdcPointer, CdcPointerBytes},
-};
+use crate::cdc::cdc_config::HASH_LENGTH;
+use crate::cdc::cdc_config::MANIFEST_ANCHOR_REF;
+use crate::cdc::cdc_config::MANIFEST_GIT_DIR;
+use crate::cdc::cdc_error::CdcError;
+use crate::cdc::cdc_error::CdcResult;
+use crate::cdc::pointer::CdcPointer;
+use crate::cdc::pointer::CdcPointerBytes;
 
 pub type CdcManifest = Vec<[u8; HASH_LENGTH]>;
 
