@@ -19,6 +19,8 @@ mod arrange;
 mod bench;
 mod bisect;
 mod bookmark;
+#[cfg(feature = "cdc")]
+mod cdc;
 mod commit;
 mod config;
 mod converge;
@@ -64,8 +66,6 @@ mod unsign;
 mod util;
 mod version;
 mod workspace;
-#[cfg(feature = "cdc")]
-mod cdc;
 
 use std::fmt::Debug;
 

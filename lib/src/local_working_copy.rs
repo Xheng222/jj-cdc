@@ -2587,7 +2587,8 @@ impl TreeState {
 
                         // 模型：
                         // - add[0] 分支 1；add[1] 分支 2；add[2] 分支 3；
-                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3 的共同祖先；
+                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3
+                        //   的共同祖先；
                         for (i, add) in file.contents.adds().enumerate() {
                             let version_path =
                                 parent.join(format!("conflict-{}-{}", i + 1, base_name));
