@@ -142,7 +142,6 @@ impl CdcStoreBackend for ChunkStoreBackend {
 
         let mut file_size = 0usize;
         let locations = self.chunk_backend.read_chunk_location(manifest)?;
-        tracing::debug!("locations read: {:?} chunks", locations);
 
         for location in locations {
             if !file_cache.contains_key(&location.pack_id) {
