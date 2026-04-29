@@ -2070,7 +2070,8 @@ impl TreeState {
         };
 
         // 尝试解析 CDC 指针
-        use crate::cdc::pointer::{CdcPointer, TryParseResult};
+        use crate::cdc::pointer::CdcPointer;
+        use crate::cdc::pointer::TryParseResult;
 
         let size = if let Some(cdc_wrapper) =
             self.store
@@ -2090,7 +2091,8 @@ impl TreeState {
                 Ok(TryParseResult::NotCdcPointer(consumed_bytes)) => {
                     let consumed_bytes = std::io::Cursor::new(consumed_bytes);
                     let mut async_consumed_bytes = AllowStdIo::new(consumed_bytes);
-                    let contents = futures::AsyncReadExt::chain(&mut async_consumed_bytes, contents);
+                    let contents =
+                        futures::AsyncReadExt::chain(&mut async_consumed_bytes, contents);
                     copy_async_to_sync(contents, &mut file)
                         .await
                         .map_err(|err| CheckoutError::Other {
@@ -2428,7 +2430,8 @@ impl TreeState {
                 }
                 MaterializedTreeValue::FileConflict(file) => {
                     use crate::cdc::backend_wrapper::CdcBackendWrapper;
-                    use crate::cdc::pointer::{CdcPointer, TryParseResult};
+                    use crate::cdc::pointer::CdcPointer;
+                    use crate::cdc::pointer::TryParseResult;
                     if let Some(cdc_wrapper) = self.store.backend_impl::<CdcBackendWrapper>()
                         && file
                             .contents
@@ -2443,7 +2446,8 @@ impl TreeState {
 
                         // 模型：
                         // - add[0] 分支 1；add[1] 分支 2；add[2] 分支 3；
-                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3 的共同祖先；
+                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3
+                        //   的共同祖先；
                         for (i, add) in file.contents.adds().enumerate() {
                             let version_path =
                                 parent.join(format!("conflict-{}-{}", i + 1, base_name));

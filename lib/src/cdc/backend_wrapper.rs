@@ -1,31 +1,43 @@
 #![expect(missing_docs)]
 
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-    pin::Pin,
-    time::SystemTime,
-};
+use std::fs::File;
+use std::path::Path;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::time::SystemTime;
 
-use futures::{AsyncRead, stream::BoxStream};
+use async_trait::async_trait;
+use futures::AsyncRead;
+use futures::stream::BoxStream;
 use gix::objs::FindHeader;
 use once_cell::sync::OnceCell;
 
-use crate::{
-    backend::{
-        Backend, BackendError, BackendResult, ChangeId, Commit, CommitId, CopyHistory, CopyId, CopyRecord, FileId, RelatedCopy, SigningFn, SymlinkId, Tree, TreeId
-    },
-    cdc::{
-        cdc_config::CDC_POINTER_SIZE,
-        cdc_error::CdcResult,
-        pointer::CdcPointer,
-        store_backend::{CdcStoreBackend, ChunkStoreBackend},
-    },
-    git_backend::{GitBackend, GitBackendLoadError},
-    index::Index,
-    repo_path::{RepoPath, RepoPathBuf},
-    settings::UserSettings,
-};
+use crate::backend::Backend;
+use crate::backend::BackendError;
+use crate::backend::BackendResult;
+use crate::backend::ChangeId;
+use crate::backend::Commit;
+use crate::backend::CommitId;
+use crate::backend::CopyHistory;
+use crate::backend::CopyId;
+use crate::backend::CopyRecord;
+use crate::backend::FileId;
+use crate::backend::RelatedCopy;
+use crate::backend::SigningFn;
+use crate::backend::SymlinkId;
+use crate::backend::Tree;
+use crate::backend::TreeId;
+use crate::cdc::cdc_config::CDC_POINTER_SIZE;
+use crate::cdc::cdc_error::CdcResult;
+use crate::cdc::pointer::CdcPointer;
+use crate::cdc::store_backend::CdcStoreBackend;
+use crate::cdc::store_backend::ChunkStoreBackend;
+use crate::git_backend::GitBackend;
+use crate::git_backend::GitBackendLoadError;
+use crate::index::Index;
+use crate::repo_path::RepoPath;
+use crate::repo_path::RepoPathBuf;
+use crate::settings::UserSettings;
 
 /// CDC backend wrapper
 pub struct CdcBackendWrapper {
@@ -82,49 +94,10 @@ impl CdcBackendWrapper {
     }
 }
 
+#[async_trait]
 impl Backend for CdcBackendWrapper {
-    fn read_file<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        id: &'life2 FileId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<Pin<Box<dyn AsyncRead + Send>>>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.read_file(path, id)
-    }
-
-    fn write_file<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        contents: &'life2 mut (dyn AsyncRead + Send + Unpin),
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<FileId>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.write_file(path, contents)
-    }
-
     fn name(&self) -> &str {
-        self.git_backend.name()
+        Self::name()
     }
 
     fn commit_id_length(&self) -> usize {
@@ -151,175 +124,60 @@ impl Backend for CdcBackendWrapper {
         self.git_backend.concurrency()
     }
 
-    fn read_symlink<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        id: &'life2 SymlinkId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<String>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.read_symlink(path, id)
+    async fn read_file(
+        &self,
+        path: &RepoPath,
+        id: &FileId,
+    ) -> BackendResult<Pin<Box<dyn AsyncRead + Send>>> {
+        self.git_backend.read_file(path, id).await
     }
 
-    fn write_symlink<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        target: &'life2 str,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<SymlinkId>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.write_symlink(path, target)
+    async fn write_file(
+        &self,
+        path: &RepoPath,
+        contents: &mut (dyn AsyncRead + Send + Unpin),
+    ) -> BackendResult<FileId> {
+        self.git_backend.write_file(path, contents).await
     }
 
-    fn read_copy<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        id: &'life1 CopyId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<CopyHistory>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.read_copy(id)
+    async fn read_symlink(&self, path: &RepoPath, id: &SymlinkId) -> BackendResult<String> {
+        self.git_backend.read_symlink(path, id).await
     }
 
-    fn write_copy<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        copy: &'life1 CopyHistory,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<CopyId>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.write_copy(copy)
+    async fn write_symlink(&self, path: &RepoPath, target: &str) -> BackendResult<SymlinkId> {
+        self.git_backend.write_symlink(path, target).await
     }
 
-    fn get_related_copies<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        copy_id: &'life1 CopyId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<Vec<RelatedCopy>>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.get_related_copies(copy_id)
+    async fn read_copy(&self, id: &CopyId) -> BackendResult<CopyHistory> {
+        self.git_backend.read_copy(id).await
     }
 
-    fn read_tree<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        id: &'life2 TreeId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<Tree>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.read_tree(path, id)
+    async fn write_copy(&self, copy: &CopyHistory) -> BackendResult<CopyId> {
+        self.git_backend.write_copy(copy).await
     }
 
-    fn write_tree<'life0, 'life1, 'life2, 'async_trait>(
-        &'life0 self,
-        path: &'life1 RepoPath,
-        contents: &'life2 Tree,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<TreeId>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        'life2: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.write_tree(path, contents)
+    async fn get_related_copies(&self, copy_id: &CopyId) -> BackendResult<Vec<RelatedCopy>> {
+        self.git_backend.get_related_copies(copy_id).await
     }
 
-    fn read_commit<'life0, 'life1, 'async_trait>(
-        &'life0 self,
-        id: &'life1 CommitId,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<Commit>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.read_commit(id)
+    async fn read_tree(&self, path: &RepoPath, id: &TreeId) -> BackendResult<Tree> {
+        self.git_backend.read_tree(path, id).await
     }
 
-    fn write_commit<'life0, 'life1, 'async_trait>(
-        &'life0 self,
+    async fn write_tree(&self, path: &RepoPath, contents: &Tree) -> BackendResult<TreeId> {
+        self.git_backend.write_tree(path, contents).await
+    }
+
+    async fn read_commit(&self, id: &CommitId) -> BackendResult<Commit> {
+        self.git_backend.read_commit(id).await
+    }
+
+    async fn write_commit(
+        &self,
         contents: Commit,
-        sign_with: Option<&'life1 mut SigningFn>,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = BackendResult<(CommitId, Commit)>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        self.git_backend.write_commit(contents, sign_with)
+        sign_with: Option<&mut SigningFn>,
+    ) -> BackendResult<(CommitId, Commit)> {
+        self.git_backend.write_commit(contents, sign_with).await
     }
 
     fn get_copy_records(

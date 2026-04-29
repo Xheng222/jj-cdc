@@ -1,28 +1,34 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::File,
-    io::{BufWriter, Write},
-    ops::Deref,
-    path::PathBuf,
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::BufWriter;
+use std::io::Write;
+use std::ops::Deref;
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use fastcdc::v2020::FastCDC;
-
-use crate::cdc::{
-    cdc_config::{
-        BUFFER_SIZE, CHUNK_AVG_SIZE, HASH_LENGTH, PACKS_DIR, SUPER_CHUNK_SIZE_MAX,
-        SUPER_CHUNK_SIZE_MIN,
-    },
-    cdc_error::CdcResult,
-    chunk_backend::{ChunkBackend, HashMapChunkBackend, PendingCdcChunk},
-    manifest_backend::{CdcManifest, GitManifestBackend, ManifestBackend},
-    pointer::{CdcPointer, CdcPointerBytes},
-    utils::calculate_hash,
-};
-
 use memmap2::Mmap;
-use rayon::iter::{IntoParallelRefIterator, ParallelDrainRange, ParallelIterator};
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::ParallelDrainRange;
+use rayon::iter::ParallelIterator;
+
+use crate::cdc::cdc_config::BUFFER_SIZE;
+use crate::cdc::cdc_config::CHUNK_AVG_SIZE;
+use crate::cdc::cdc_config::HASH_LENGTH;
+use crate::cdc::cdc_config::PACKS_DIR;
+use crate::cdc::cdc_config::SUPER_CHUNK_SIZE_MAX;
+use crate::cdc::cdc_config::SUPER_CHUNK_SIZE_MIN;
+use crate::cdc::cdc_error::CdcResult;
+use crate::cdc::chunk_backend::ChunkBackend;
+use crate::cdc::chunk_backend::HashMapChunkBackend;
+use crate::cdc::chunk_backend::PendingCdcChunk;
+use crate::cdc::manifest_backend::CdcManifest;
+use crate::cdc::manifest_backend::GitManifestBackend;
+use crate::cdc::manifest_backend::ManifestBackend;
+use crate::cdc::pointer::CdcPointer;
+use crate::cdc::pointer::CdcPointerBytes;
+use crate::cdc::utils::calculate_hash;
 
 #[async_trait]
 pub trait CdcStoreBackend: Send + Sync {

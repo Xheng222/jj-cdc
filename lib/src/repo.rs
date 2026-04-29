@@ -458,7 +458,7 @@ impl Default for StoreFactories {
                     crate::cdc::backend_wrapper::CdcBackendWrapper::load_at_workspace(
                         settings,
                         store_path,
-                        workspace_root
+                        workspace_root,
                     )?,
                 ))
             }),

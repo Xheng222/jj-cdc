@@ -1,12 +1,13 @@
 #![expect(missing_docs)]
 
-use futures::{AsyncRead, AsyncReadExt as _};
-use serde::{Deserialize, Serialize};
+use futures::AsyncRead;
+use futures::AsyncReadExt as _;
+use serde::Deserialize;
+use serde::Serialize;
 
-use crate::cdc::{
-    cdc_config::{MAGIC, MAGIC_LENGTH},
-    cdc_error::CdcResult,
-};
+use crate::cdc::cdc_config::MAGIC;
+use crate::cdc::cdc_config::MAGIC_LENGTH;
+use crate::cdc::cdc_error::CdcResult;
 
 pub type CdcPointerBytes = Vec<u8>;
 
@@ -44,7 +45,8 @@ impl CdcPointer {
     ///
     /// # 返回值
     /// - `Ok(TryParseResult::Parsed(pointer))` - 成功解析出 CDC 指针
-    /// - `Ok(TryParseResult::NotCdcPointer(bytes))` - 不是 CDC 指针，返回已读取的字节
+    /// - `Ok(TryParseResult::NotCdcPointer(bytes))` - 不是 CDC
+    ///   指针，返回已读取的字节
     /// - `Err(e)` - 是 CDC 指针但解析失败，或读取错误
     pub async fn try_parse<R: AsyncRead + Unpin>(reader: &mut R) -> CdcResult<TryParseResult> {
         // 尝试读取魔数
