@@ -1,25 +1,34 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fs::{self, File},
-    io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
-    sync::{RwLock, mpsc},
-};
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::fs::File;
+use std::fs::{self};
+use std::io::BufReader;
+use std::io::BufWriter;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::RwLock;
+use std::sync::mpsc;
 
 use memmap2::Mmap;
-use rayon::iter::{
-    IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
-    IntoParallelRefMutIterator, ParallelIterator,
-};
+use rayon::iter::IndexedParallelIterator;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::IntoParallelRefIterator;
+use rayon::iter::IntoParallelRefMutIterator;
+use rayon::iter::ParallelIterator;
 
-use crate::cdc::{
-    cdc_config::{
-        BUFFER_SIZE, GLOBAL_LOCK, HASH_LENGTH, HASHMAP_INDEX_DIR, MAX_PACK_SIZE, PACKS_DIR,
-        REPACK_THRESHOLD,
-    },
-    cdc_error::{CdcError, CdcResult},
-    manifest_backend::CdcManifest,
-};
+use crate::cdc::cdc_config::BUFFER_SIZE;
+use crate::cdc::cdc_config::GLOBAL_LOCK;
+use crate::cdc::cdc_config::HASH_LENGTH;
+use crate::cdc::cdc_config::HASHMAP_INDEX_DIR;
+use crate::cdc::cdc_config::MAX_PACK_SIZE;
+use crate::cdc::cdc_config::PACKS_DIR;
+use crate::cdc::cdc_config::REPACK_THRESHOLD;
+use crate::cdc::cdc_error::CdcError;
+use crate::cdc::cdc_error::CdcResult;
+use crate::cdc::manifest_backend::CdcManifest;
 
 #[derive(Clone, Debug)]
 pub struct ChunkLocation {

@@ -1,11 +1,12 @@
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom},
-};
+use std::fs::File;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 
-use digest::{Digest, consts::U32};
+use digest::Digest;
+use digest::consts::U32;
 
-use crate::cdc::cdc_config::{MAX_BINARY_FILE_HEAD_SIZE};
+use crate::cdc::cdc_config::MAX_BINARY_FILE_HEAD_SIZE;
 
 /// 计算数据的 Hash
 pub fn calculate_hash(data: &[u8]) -> [u8; 32] {

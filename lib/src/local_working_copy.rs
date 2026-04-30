@@ -1874,9 +1874,11 @@ impl FileSnapshotter<'_> {
         if let Some(current_tree_value) = current_tree_values.as_resolved() {
             let previous_file_id = match current_tree_value {
                 Some(TreeValue::File { id, .. }) => Some(id),
-                _ => None
+                _ => None,
             };
-            let id = self.write_file_to_store(repo_path, disk_path, previous_file_id).await?;
+            let id = self
+                .write_file_to_store(repo_path, disk_path, previous_file_id)
+                .await?;
             // On Windows, we preserve the executable bit from the current tree.
             let executable = exec_bit.for_tree_value(self.tree_state.exec_policy, || {
                 if let Some(TreeValue::File {
@@ -1988,10 +1990,10 @@ impl FileSnapshotter<'_> {
         })?;
 
         #[cfg(feature = "cdc")]
-        if let Some(cdc_backend_wrapper) = self
-            .store()
-            .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>() {
-
+        if let Some(cdc_backend_wrapper) =
+            self.store()
+                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
+        {
             let use_cdc = match previous_file_id {
                 Some(file_id) => cdc_backend_wrapper.is_stored_as_cdc(file_id)?,
                 None => crate::cdc::utils::is_binary_file(&mut file),
@@ -2088,7 +2090,8 @@ impl TreeState {
         };
 
         // 尝试解析 CDC 指针
-        use crate::cdc::pointer::{CdcPointer, TryParseResult};
+        use crate::cdc::pointer::CdcPointer;
+        use crate::cdc::pointer::TryParseResult;
 
         let size = if let Some(cdc_wrapper) =
             self.store
@@ -2445,7 +2448,8 @@ impl TreeState {
                 }
                 MaterializedTreeValue::FileConflict(file) => {
                     use crate::cdc::backend_wrapper::CdcBackendWrapper;
-                    use crate::cdc::pointer::{CdcPointer, TryParseResult};
+                    use crate::cdc::pointer::CdcPointer;
+                    use crate::cdc::pointer::TryParseResult;
                     if let Some(cdc_wrapper) = self.store.backend_impl::<CdcBackendWrapper>()
                         && file
                             .contents
@@ -2460,7 +2464,8 @@ impl TreeState {
 
                         // 模型：
                         // - add[0] 分支 1；add[1] 分支 2；add[2] 分支 3；
-                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3 的共同祖先；
+                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3
+                        //   的共同祖先；
                         for (i, add) in file.contents.adds().enumerate() {
                             let version_path =
                                 parent.join(format!("conflict-{}-{}", i + 1, base_name));

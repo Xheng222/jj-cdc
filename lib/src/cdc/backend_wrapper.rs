@@ -1,11 +1,10 @@
 #![expect(missing_docs)]
 
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-    pin::Pin,
-    time::SystemTime,
-};
+use std::fs::File;
+use std::path::Path;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -13,16 +12,34 @@ use gix::objs::FindHeader;
 use once_cell::sync::OnceCell;
 use tokio::io::AsyncRead;
 
-use crate::{
-    backend::{
-        Backend, BackendError, BackendResult, ChangeId, Commit, CommitId, CopyHistory, CopyId, CopyRecord, FileId, RelatedCopy, SigningFn, SymlinkId, Tree, TreeId
-    }, cdc::{
-        cdc_config::CDC_POINTER_SIZE,
-        cdc_error::{CdcError, CdcResult},
-        pointer::CdcPointer,
-        store_backend::{CdcStoreBackend, ChunkStoreBackend},
-    }, git_backend::{GitBackend, GitBackendLoadError}, index::Index, object_id::ObjectId, repo_path::{RepoPath, RepoPathBuf}, settings::UserSettings
-};
+use crate::backend::Backend;
+use crate::backend::BackendError;
+use crate::backend::BackendResult;
+use crate::backend::ChangeId;
+use crate::backend::Commit;
+use crate::backend::CommitId;
+use crate::backend::CopyHistory;
+use crate::backend::CopyId;
+use crate::backend::CopyRecord;
+use crate::backend::FileId;
+use crate::backend::RelatedCopy;
+use crate::backend::SigningFn;
+use crate::backend::SymlinkId;
+use crate::backend::Tree;
+use crate::backend::TreeId;
+use crate::cdc::cdc_config::CDC_POINTER_SIZE;
+use crate::cdc::cdc_error::CdcError;
+use crate::cdc::cdc_error::CdcResult;
+use crate::cdc::pointer::CdcPointer;
+use crate::cdc::store_backend::CdcStoreBackend;
+use crate::cdc::store_backend::ChunkStoreBackend;
+use crate::git_backend::GitBackend;
+use crate::git_backend::GitBackendLoadError;
+use crate::index::Index;
+use crate::object_id::ObjectId;
+use crate::repo_path::RepoPath;
+use crate::repo_path::RepoPathBuf;
+use crate::settings::UserSettings;
 
 /// CDC backend wrapper
 pub struct CdcBackendWrapper {
