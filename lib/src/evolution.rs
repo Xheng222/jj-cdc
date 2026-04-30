@@ -26,8 +26,8 @@ use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use futures::stream;
 use itertools::Itertools as _;
-use pollster::FutureExt as _;
 use thiserror::Error;
 
 use crate::backend::BackendError;
@@ -96,14 +96,18 @@ pub enum WalkPredecessorsError {
 pub fn walk_predecessors<'repo>(
     repo: &'repo ReadonlyRepo,
     start_commits: &[CommitId],
-) -> impl Iterator<Item = Result<CommitEvolutionEntry, WalkPredecessorsError>> + use<'repo> {
+) -> impl Stream<Item = Result<CommitEvolutionEntry, WalkPredecessorsError>> + use<'repo> {
     let op_ancestors = op_walk::walk_ancestors(slice::from_ref(repo.operation())).boxed_local();
-    WalkPredecessors {
+    let state = WalkPredecessors {
         repo,
         op_ancestors,
         to_visit: start_commits.to_vec(),
         queued: VecDeque::new(),
-    }
+    };
+    stream::unfold(state, |mut state| async move {
+        let result = state.try_next_impl().await.transpose()?;
+        Some((result, state))
+    })
 }
 
 struct WalkPredecessors<'repo, I> {
@@ -117,9 +121,11 @@ impl<I> WalkPredecessors<'_, I>
 where
     I: Stream<Item = OpStoreResult<Operation>> + Unpin,
 {
-    async fn try_next(&mut self) -> Result<Option<CommitEvolutionEntry>, WalkPredecessorsError> {
+    async fn try_next_impl(
+        &mut self,
+    ) -> Result<Option<CommitEvolutionEntry>, WalkPredecessorsError> {
         while !self.to_visit.is_empty() && self.queued.is_empty() {
-            let Some(op) = self.op_ancestors.next().await.transpose()? else {
+            let Some(op) = self.op_ancestors.try_next().await? else {
                 // Scanned all operations, no fallback needed.
                 self.flush_commits().await?;
                 break;
@@ -259,17 +265,6 @@ where
             });
         }
         Ok(())
-    }
-}
-
-impl<I> Iterator for WalkPredecessors<'_, I>
-where
-    I: Stream<Item = OpStoreResult<Operation>> + Unpin,
-{
-    type Item = Result<CommitEvolutionEntry, WalkPredecessorsError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.try_next().block_on().transpose()
     }
 }
 

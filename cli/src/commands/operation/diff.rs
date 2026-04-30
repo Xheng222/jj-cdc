@@ -18,13 +18,14 @@ use std::slice;
 use std::sync::Arc;
 
 use clap_complete::ArgValueCandidates;
+use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 use itertools::Itertools as _;
 use jj_lib::backend::ChangeId;
 use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::evolution::accumulate_predecessors;
-use jj_lib::graph::TopoGroupedGraphIterator;
+use jj_lib::graph::TopoGroupedGraph;
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::op_store::RefTarget;
 use jj_lib::op_store::RemoteRef;
@@ -306,9 +307,10 @@ pub async fn show_op_diff(
         if let Some(graph_style) = graph_style {
             let mut raw_output = formatter.raw()?;
             let mut graph = get_graphlog(graph_style, raw_output.as_mut());
-            let graph_iter = TopoGroupedGraphIterator::new(revset.iter_graph(), |id| id);
-            for node in graph_iter {
-                let (commit_id, mut edges) = node?;
+            let mut graph_stream = TopoGroupedGraph::new(revset.stream_graph(), |id| id)
+                .stream()
+                .boxed_local();
+            while let Some((commit_id, mut edges)) = graph_stream.try_next().await? {
                 let modified_change = op_commits_diff.changes.get(&commit_id).unwrap();
                 // Omit "missing" edge to keep the graph concise.
                 edges.retain(|edge| !edge.is_missing());

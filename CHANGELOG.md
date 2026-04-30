@@ -12,6 +12,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Breaking changes
 
+* The `--pattern` flag for `file search` now defaults to `regex:` instead of `glob:`.
+
 * `jj git push --all`/`--tracked`/`-r REVSETS` no longer fails when revisions to
   push are private or have conflicts. Bookmarks which aren't eligible to push
   will be skipped.
@@ -23,6 +25,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New features
 
+* The `--pattern` flag for `file search` now accepts various pattern kinds through
+  `kind:pattern` syntax.
+
 * A new global flag `--no-integrate-operation` lets you run a command without
   impacting the repo state or the working copy.
 
@@ -33,6 +38,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `run-tool-if-zero-line-ranges` configs. This allows running tools only on modified
   lines and fine-grained control over when the tool is run. If you have set the `line-range-arg`
   config, use `--all-lines` to match the previous behavior of formatting the entire file.
+
+* A new `replace(pattern, content, replacement)` template function is added
+  which supports replacement of content in templates, using a lambda to format
+  replacement text. It supports all string patterns, including regexes with
+  capture groups (e.g. `replace(regex:'(\w+) (\w+)', "hello world", |c| c.get(1) ++ " " ++ c.get(2))`).
+
+* New `ByteString` template type for things like file content.
+
+* `jj gerrit upload` now supports the new options `--message` (`-m`), `--edit`
+  and `--merged`. You can now also pass multiple hashtags by repeating the
+  `--hashtag` option.
+
+* New `remotes.<name>.fetch-bookmarks`/`fetch-tags` options to [configure
+  default fetch targets.](docs/config.md#default-bookmarks-and-tags-to-fetch)
 
 ### Fixed bugs
 

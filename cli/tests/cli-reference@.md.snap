@@ -1215,9 +1215,13 @@ This is an early version of the command. It only supports glob matching for now,
 * `-r`, `--revision <REVSET>` — The revision to search files in
 
   Default value: `@`
-* `-p`, `--pattern <PATTERN>` — The glob pattern to search for
+* `-p`, `--pattern <PATTERN>` — The pattern to search for in a single line
 
-   The whole line must match the pattern, so you may want to pass something like `--pattern '*foo*'`.
+   It is a [string pattern syntax] like `kind:pattern`.  The kind defaults to regex when omitted.
+
+   If it is a glob pattern, the whole line must match the pattern, so you may want to pass something like `--pattern 'glob:*foo*'`.
+
+   [string pattern syntax]: https://docs.jj-vcs.dev/latest/revsets/#string-patterns
 
 
 
@@ -1456,9 +1460,13 @@ Note: this command takes 1-or-more revsets arguments, each of which can resolve 
 * `--topic <TOPIC>` — Applies a topic to the change
 
    See https://gerrit-review.googlesource.com/Documentation/intro-user.html#topics. Changes can be grouped by topic, and Gerrit can be configured to submit all changes in a topic together in a single click.
-* `--hashtag <HASHTAG>` — Applies a hashtag to the change
+* `--hashtag <HASHTAG>` — Applies a hashtag to the change (can be repeated)
 
    See https://gerrit-review.googlesource.com/Documentation/intro-user.html#hashtags. Hashtags are freeform strings associated with a change, like on social media platforms. Similar to topics, hashtags can be used to group related changes together, and to search using the hashtag: operator. Unlike topics, a change can have multiple hashtags, and they are only used for informational grouping. Changes with the same hashtags are not necessarily submitted together.
+* `-m`, `--message <MESSAGE>` — A patch set description for the new patch set
+* `--edit` — Push the change as a change edit
+
+   To push a change edit the underlying change need to already exist on the gerrit server. Change edits don't immediately create a new patchset, but need to be published from the web UI first. There can only be one edit for each change. Pushing a new change edit will replace the previous one.
 * `--wip` — Marks the change as WIP (work in progress)
 
    See https://gerrit-review.googlesource.com/Documentation/intro-user.html#wip.
@@ -1485,6 +1493,7 @@ Note: this command takes 1-or-more revsets arguments, each of which can resolve 
 
 * `--submit` — Directly submit the changes, bypassing code review
 * `--skip-validation` — When --submit is provided, skip performing validations
+* `--merged` — Create a new change, even if the change has already been merged
 * `--ignore-attention-set` — Do not modify the attention set upon uploading
 * `--deadline <DEADLINE>` — The deadline after which the push should be aborted
 * `--custom <CUSTOM>` — Send the following custom keyed values to Gerrit (can be repeated)
@@ -1645,7 +1654,7 @@ Fetch from a Git remote
 
 If no remotes are specified, fetches the remotes specified by the `git.fetch` setting. If that is not configured and there are multiple remotes, the remote named "origin" will be used.
 
-If no branches nor tags are specified, the default fetch refspecs for the selected remotes are read from the Git configuration.
+If no branches nor tags are specified, fetches bookmarks and tags specified by the `remotes.<name>.fetch-bookmarks`/`fetch-tags` settings. If `remotes.<name>.fetch-bookmarks` is not configured, the default fetch refspecs for the selected remotes are read from the Git configuration.
 
 If a working-copy commit gets abandoned, it will be given a new, empty commit. This is true in general; it is not specific to this command.
 
@@ -3147,12 +3156,12 @@ achieved with `jj new`.
 * `-B`, `--insert-before <REVSETS>` [alias: `before`] — The revision(s) to insert before (can be repeated to create a merge commit)
 
    Extracts the selected changes into a new commit inserted before the given revision(s). The remaining changes stay in the original commit's location.
-* `-m`, `--message <MESSAGE>` — The change description to use (don't open editor)
+* `-m`, `--message <MESSAGE>` — The change description to use for the selected changes (don't open editor)
 
-   Sets the description for the first commit (the one containing the selected changes). The second commit keeps the original description.
-* `--editor` — Open an editor to edit the change description
+   Sets the description for the revision containing the selected changes. The other revision will keep its original description, if any.
+* `--editor` — Open an editor to edit the change description(s)
 
-   Forces an editor to open when using `--message` to allow the message to be edited afterwards.
+   Forces an editor to open when using `--message` to allow the message to be edited afterward.
 * `-p`, `--parallel` — Split the revision into two parallel revisions instead of a parent and child
 
 
