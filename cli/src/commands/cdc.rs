@@ -23,9 +23,11 @@ use crate::ui::Ui;
 #[derive(Subcommand, Clone, Debug)]
 pub(crate) enum CdcCommand {
     /// Add files to the CDC set, converting them from git storage to CDC
+    ///
     /// storage
     Add(CdcSetArgs),
     /// Remove files from the CDC set, converting them from CDC storage back to
+    ///
     /// git storage
     Remove(CdcSetArgs),
 }
