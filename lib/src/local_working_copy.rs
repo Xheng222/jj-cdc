@@ -2449,7 +2449,9 @@ impl TreeState {
                 MaterializedTreeValue::FileConflict(file) => {
                     use crate::cdc::backend_wrapper::CdcBackendWrapper;
                     use crate::cdc::pointer::CdcPointer;
-                    use crate::cdc::pointer::TryParseResult;
+                    // use crate::cdc::pointer::TryParseResult;
+                    use crate::cdc::utils::write_file_maybe_from_pointer;
+
                     if let Some(cdc_wrapper) = self.store.backend_impl::<CdcBackendWrapper>()
                         && file
                             .contents
@@ -2480,22 +2482,16 @@ impl TreeState {
                                 }
                             })?;
                             let mut cursor = std::io::Cursor::new(add);
-                            let pointer = CdcPointer::try_parse(&mut cursor).await.unwrap();
-                            if let TryParseResult::Parsed(pointer) = pointer {
-                                let _size =
-                                    cdc_wrapper.read_file_from_cdc(&pointer, &mut file).await?;
-                            } else {
-                                return Err(CheckoutError::Other {
+                            write_file_maybe_from_pointer(cdc_wrapper, &mut file, &mut cursor).await.map_err(|err| {
+                                CheckoutError::Other {
                                     message: format!(
-                                        "Failed to parse CDC pointer for {}",
-                                        version_path.display()
+                                        "Failed to write file {} from CDC: {:?}",
+                                        version_path.display(),
+                                        err
                                     ),
-                                    err: Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        "Failed to parse CDC pointer",
-                                    )),
-                                });
-                            }
+                                    err: err.into(),
+                                }
+                            })?;
                         }
 
                         let mut base_conetents = HashMap::new();
@@ -2529,22 +2525,16 @@ impl TreeState {
                                 }
                             })?;
                             let mut cursor = std::io::Cursor::new(base_contents);
-                            let pointer = CdcPointer::try_parse(&mut cursor).await.unwrap();
-                            if let TryParseResult::Parsed(pointer) = pointer {
-                                let _size =
-                                    cdc_wrapper.read_file_from_cdc(&pointer, &mut file).await?;
-                            } else {
-                                return Err(CheckoutError::Other {
+                            write_file_maybe_from_pointer(cdc_wrapper, &mut file, &mut cursor).await.map_err(|err| {
+                                CheckoutError::Other {
                                     message: format!(
-                                        "Failed to parse CDC pointer for {}",
-                                        version_path.display()
+                                        "Failed to write file {} from CDC: {:?}",
+                                        version_path.display(),
+                                        err
                                     ),
-                                    err: Box::new(std::io::Error::new(
-                                        std::io::ErrorKind::Other,
-                                        "Failed to parse CDC pointer",
-                                    )),
-                                });
-                            }
+                                    err: err.into(),
+                                }
+                            })?;
                         }
 
                         FileState::placeholder()
