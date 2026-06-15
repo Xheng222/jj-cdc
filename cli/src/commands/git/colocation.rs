@@ -14,7 +14,9 @@
 
 use std::io::ErrorKind;
 use std::io::Write as _;
+use std::process::Command;
 
+use indoc::indoc;
 use itertools::Itertools as _;
 use jj_lib::commit::Commit;
 use jj_lib::file_util::IoResultExt as _;
@@ -48,8 +50,18 @@ pub struct GitColocationEnableArgs {}
 /// This moves the Git repository that is at the root of the Jujutsu
 /// workspace into the .jj directory. Once this is done you will no longer
 /// be able to use Git commands directly in the Jujutsu workspace.
+///
+/// If there are secondary colocated workspaces (created with
+/// `jj workspace add`), this command will fail unless --force
+/// is specified. Without --force, you should first forget those workspaces
+/// with `jj workspace forget`.
 #[derive(clap::Args, Clone, Debug)]
-pub struct GitColocationDisableArgs {}
+pub struct GitColocationDisableArgs {
+    /// Force disabling colocation even if secondary colocated workspaces exist.
+    /// This will leave those workspaces in a broken state.
+    #[arg(long)]
+    force: bool,
+}
 
 /// Manage Jujutsu repository colocation with Git
 #[derive(clap::Subcommand, Clone, Debug)]
@@ -152,7 +164,7 @@ async fn cmd_git_colocation_enable(
     // Make sure that the workspace supports git colocation commands
     workspace_supports_git_colocation_commands(&workspace_command)?;
 
-    // Then ensure that the workspace is not already colocated before proceeding
+    // Then ensure that the workspace is not already colocated before proceeding.
     if is_colocated_git_workspace(workspace_command.workspace(), workspace_command.repo()) {
         writeln!(ui.status(), "Workspace is already colocated with Git.")?;
         return Ok(());
@@ -170,6 +182,8 @@ async fn cmd_git_colocation_enable(
     let git_store_path = jj_repo_path.join("store").join("git");
     let git_target_path = jj_repo_path.join("store").join("git_target");
     let dot_git_path = workspace_root.join(".git");
+
+    drop(workspace_command);
 
     // Move the git repository from .jj/repo/store/git to .git
     std::fs::rename(&git_store_path, &dot_git_path).map_err(|err| match err.kind() {
@@ -190,6 +204,7 @@ async fn cmd_git_colocation_enable(
     set_git_repo_bare(&dot_git_path, false)?;
 
     // Reload the workspace command helper to ensure it picks up the changes
+    let workspace_command = command.workspace_helper_no_snapshot(ui).await?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // Add a .jj/.gitignore file (if needed) to ensure that the colocated Git
@@ -215,17 +230,52 @@ async fn cmd_git_colocation_enable(
 async fn cmd_git_colocation_disable(
     ui: &mut Ui,
     command: &CommandHelper,
-    _args: &GitColocationDisableArgs,
+    args: &GitColocationDisableArgs,
 ) -> Result<(), CommandError> {
     let workspace_command = command.workspace_helper(ui).await?;
 
     // Make sure that the repository supports git colocation commands
     workspace_supports_git_colocation_commands(&workspace_command)?;
 
-    // Then ensure that the repo is colocated before proceeding
+    // Then ensure that the repo is colocated before proceeding.
     if !is_colocated_git_workspace(workspace_command.workspace(), workspace_command.repo()) {
         writeln!(ui.status(), "Workspace is already not colocated with Git.")?;
         return Ok(());
+    }
+
+    // Check for secondary colocated workspaces (git worktrees)
+    if !args.force {
+        let workspace_root = workspace_command.workspace_root();
+        let dot_git_path = workspace_root.join(".git");
+
+        // Use git worktree list to find secondary worktrees
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&dot_git_path)
+            .arg("worktree")
+            .arg("list")
+            .arg("--porcelain")
+            .output();
+
+        if let Ok(output) = output
+            && output.status.success()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Count worktrees - each worktree block starts with "worktree "
+            let worktree_count = stdout
+                .lines()
+                .filter(|l| l.starts_with("worktree "))
+                .count();
+            if worktree_count > 1 {
+                return Err(user_error(indoc! {"
+                    Cannot disable colocation: secondary colocated workspaces exist.
+                    These workspaces would become broken Git worktrees.
+                    Either:
+                      - Run `jj workspace forget <name>` for each secondary workspace first
+                      - Use --force to disable anyway (secondary workspaces will be broken)
+                "}));
+            }
+        }
     }
 
     let workspace_root = workspace_command.workspace_root();
@@ -237,6 +287,8 @@ async fn cmd_git_colocation_disable(
         .join("git_target");
     let dot_git_path = workspace_root.join(".git");
     let jj_gitignore_path = dot_jj_path.join(".gitignore");
+
+    drop(workspace_command);
 
     // Move the Git repository from .git into .jj/repo/store/git
     std::fs::rename(&dot_git_path, &git_store_path).map_err(|e| {
@@ -254,10 +306,15 @@ async fn cmd_git_colocation_disable(
     std::fs::remove_file(&jj_gitignore_path).ok();
 
     // Reload the workspace command helper to ensure it picks up the changes
+    let workspace_command = command.workspace_helper_no_snapshot(ui).await?;
     let mut workspace_command = reload_workspace_helper(ui, command, workspace_command).await?;
 
     // And finally, remove the git HEAD reference
     remove_git_head(ui, &mut workspace_command).await?;
+
+    let mut tx = workspace_command.start_transaction();
+    tx.repo_mut().remove_local_git();
+    tx.finish(ui, "remove git-tracking bookmark").await?;
 
     writeln!(
         ui.status(),
@@ -302,8 +359,9 @@ async fn set_git_head_to_wc_parent(
     workspace_command: &mut WorkspaceCommandHelper,
     wc_commit: &Commit,
 ) -> Result<(), CommandError> {
+    let workspace_name = workspace_command.workspace_name().to_owned();
     let mut tx = workspace_command.start_transaction();
-    git::reset_head(tx.repo_mut(), wc_commit).await?;
+    git::reset_head(tx.repo_mut(), wc_commit, &workspace_name).await?;
     if tx.repo().has_changes() {
         tx.finish(ui, "set git head to working copy parent").await?;
     }

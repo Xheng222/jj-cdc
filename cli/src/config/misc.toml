@@ -5,8 +5,11 @@
 # in the first line of the relevant commands' help text.
 b = ["bookmark"]
 ci = ["commit"]
-desc = ["describe"]
+ds = ["describe"]
 st = ["status"]
+ab = ["abandon"]
+ws = ["workspace"]
+init = ["git", "init"]
 
 [diff.color-words]
 conflict = "materialize"
@@ -25,7 +28,7 @@ disabled-branches = []
 # no builtin aliases
 
 [git]
-colocate = true
+colocate = false
 private-commits = "none()"
 sign-on-push = false
 track-default-bookmark-on-clone = true
@@ -46,6 +49,7 @@ conflict-marker-style = "diff"
 show-cryptographic-signatures = false
 bookmark-list-sort-keys = ["name"]
 tag-list-sort-keys = ["name"]
+default-command = "log"
 
 [ui.movement]
 edit = false
@@ -56,7 +60,7 @@ wrapping = "anywhere"
 show-ruler = true
 
 [snapshot]
-max-new-file-size = "1MiB"
+max-new-file-size = "100MiB"
 auto-track = "all()"
 auto-update-stale = false
 

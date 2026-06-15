@@ -19,6 +19,8 @@ mod arrange;
 mod bench;
 mod bisect;
 mod bookmark;
+#[cfg(feature = "cdc")]
+mod cdc;
 mod commit;
 mod config;
 mod debug;
@@ -158,6 +160,9 @@ enum Command {
     Version(version::VersionArgs),
     #[command(subcommand)]
     Workspace(workspace::WorkspaceCommand),
+    #[cfg(feature = "cdc")]
+    #[command(subcommand)]
+    Cdc(cdc::CdcCommand),
 }
 
 pub fn default_app() -> clap::Command {
@@ -221,6 +226,8 @@ pub async fn run_command(ui: &mut Ui, command_helper: &CommandHelper) -> Result<
         Command::Util(args) => util::cmd_util(ui, command_helper, args).await,
         Command::Version(args) => version::cmd_version(ui, command_helper, args).await,
         Command::Workspace(args) => workspace::cmd_workspace(ui, command_helper, args).await,
+        #[cfg(feature = "cdc")]
+        Command::Cdc(args) => cdc::cmd_cdc(ui, command_helper, args).await,
     }
 }
 

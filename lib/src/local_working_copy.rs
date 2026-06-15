@@ -985,6 +985,15 @@ impl TreeStateSettings {
             fsmonitor_settings: FsmonitorSettings::from_settings(user_settings)?,
         })
     }
+
+    pub async fn convert_eol_for_snapshot<'a>(
+        &self,
+        contents: impl AsyncRead + Send + Unpin + 'a,
+    ) -> Result<Box<dyn AsyncRead + Send + Unpin + 'a>, std::io::Error> {
+        TargetEolStrategy::new(self.eol_conversion_mode)
+            .convert_eol_for_snapshot(contents)
+            .await
+    }
 }
 
 pub struct TreeState {
@@ -1517,7 +1526,7 @@ impl FileSnapshotter<'_> {
             match body(scope) {
                 Ok(()) => {}
                 Err(err) => self.error.set(err).unwrap_or(()),
-            }
+            };
         });
     }
 
@@ -1863,7 +1872,13 @@ impl FileSnapshotter<'_> {
         materialized_conflict_data: Option<MaterializedConflictData>,
     ) -> Result<MergedTreeValue, SnapshotError> {
         if let Some(current_tree_value) = current_tree_values.as_resolved() {
-            let id = self.write_file_to_store(repo_path, disk_path).await?;
+            let previous_file_id = match current_tree_value {
+                Some(TreeValue::File { id, .. }) => Some(id),
+                _ => None,
+            };
+            let id = self
+                .write_file_to_store(repo_path, disk_path, previous_file_id)
+                .await?;
             // On Windows, we preserve the executable bit from the current tree.
             let executable = exec_bit.for_tree_value(self.tree_state.exec_policy, || {
                 if let Some(TreeValue::File {
@@ -1967,11 +1982,34 @@ impl FileSnapshotter<'_> {
         &self,
         path: &RepoPath,
         disk_path: &Path,
+        previous_file_id: Option<&FileId>,
     ) -> Result<FileId, SnapshotError> {
-        let file = File::open(disk_path).map_err(|err| SnapshotError::Other {
+        let mut file = File::open(disk_path).map_err(|err| SnapshotError::Other {
             message: format!("Failed to open file {}", disk_path.display()),
             err: err.into(),
         })?;
+
+        #[cfg(feature = "cdc")]
+        if let Some(cdc_backend_wrapper) =
+            self.store()
+                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
+        {
+            let use_cdc = match previous_file_id {
+                Some(file_id) => cdc_backend_wrapper.is_stored_as_cdc(file_id)?,
+                None => crate::cdc::utils::is_binary_file(&mut file),
+            };
+
+            if use_cdc {
+                let pointer_content = cdc_backend_wrapper.write_file_to_cdc(file).await?;
+                let mut async_pointer_content =
+                    AllowStdIo::new(std::io::Cursor::new(pointer_content));
+                return Ok(self
+                    .store()
+                    .write_file(path, &mut async_pointer_content)
+                    .await?);
+            }
+        }
+
         let mut contents = self
             .tree_state
             .target_eol_strategy
@@ -1981,6 +2019,7 @@ impl FileSnapshotter<'_> {
                 message: "Failed to convert the EOL".to_string(),
                 err: err.into(),
             })?;
+
         Ok(self.store().write_file(path, &mut contents).await?)
     }
 
@@ -2038,7 +2077,9 @@ impl TreeState {
                 message: format!("Failed to open file {} for writing", disk_path.display()),
                 err: err.into(),
             })?;
-        let contents = if apply_eol_conversion {
+
+        // 先进行 EOL 转换（如果需要）
+        let mut contents = if apply_eol_conversion {
             self.target_eol_strategy
                 .convert_eol_for_update(contents)
                 .await
@@ -2049,15 +2090,60 @@ impl TreeState {
         } else {
             Box::new(contents)
         };
-        let size = copy_async_to_sync(contents, &mut file)
-            .await
-            .map_err(|err| CheckoutError::Other {
-                message: format!(
-                    "Failed to write the content to the file {}",
-                    disk_path.display()
-                ),
-                err: err.into(),
-            })?;
+
+        // 尝试解析 CDC 指针
+        use crate::cdc::pointer::CdcPointer;
+        use crate::cdc::pointer::TryParseResult;
+
+        let size = if let Some(cdc_wrapper) =
+            self.store
+                .backend_impl::<crate::cdc::backend_wrapper::CdcBackendWrapper>()
+        {
+            match CdcPointer::try_parse(&mut contents).await {
+                Ok(TryParseResult::Parsed(pointer)) => {
+                    let size = cdc_wrapper
+                        .read_file_from_cdc(&pointer, &mut file)
+                        .await
+                        .map_err(|err| CheckoutError::Other {
+                            message: format!("Failed to read file from CDC: {:?}", err),
+                            err: err.into(),
+                        })?;
+                    size
+                }
+                Ok(TryParseResult::NotCdcPointer(consumed_bytes)) => {
+                    let consumed_bytes = std::io::Cursor::new(consumed_bytes);
+                    let mut async_consumed_bytes = AllowStdIo::new(consumed_bytes);
+                    let contents =
+                        futures::AsyncReadExt::chain(&mut async_consumed_bytes, contents);
+                    copy_async_to_sync(contents, &mut file)
+                        .await
+                        .map_err(|err| CheckoutError::Other {
+                            message: format!(
+                                "Failed to write the content to the file {}",
+                                disk_path.display()
+                            ),
+                            err: err.into(),
+                        })?
+                }
+                Err(e) => {
+                    return Err(CheckoutError::Other {
+                        message: format!("Failed to parse CDC pointer for {}", disk_path.display()),
+                        err: e.into(),
+                    });
+                }
+            }
+        } else {
+            copy_async_to_sync(contents, &mut file)
+                .await
+                .map_err(|err| CheckoutError::Other {
+                    message: format!(
+                        "Failed to write the content to the file {}",
+                        disk_path.display()
+                    ),
+                    err: err.into(),
+                })?
+        };
+
         set_executable(exec_bit, disk_path)
             .map_err(|err| checkout_error_for_stat_error(err, disk_path))?;
         // Read the file state from the file descriptor. That way, know that the file
@@ -2365,26 +2451,122 @@ impl TreeState {
                     panic!("unexpected tree entry in diff at {path:?}");
                 }
                 MaterializedTreeValue::FileConflict(file) => {
-                    let conflict_marker_len =
-                        choose_materialized_conflict_marker_len(&file.contents);
-                    let options = ConflictMaterializeOptions {
-                        marker_style: self.conflict_marker_style,
-                        marker_len: Some(conflict_marker_len),
-                        merge: self.store.merge_options().clone(),
-                    };
-                    let exec_bit = ExecBit::new_from_repo(
-                        file.executable.unwrap_or(false),
-                        self.exec_policy,
-                        get_prev_exec,
-                    );
-                    let contents =
-                        materialize_merge_result_to_bytes(&file.contents, &file.labels, &options);
-                    let mut file_state =
-                        self.write_conflict(&disk_path, &contents, exec_bit).await?;
-                    file_state.materialized_conflict_data = Some(MaterializedConflictData {
-                        conflict_marker_len: conflict_marker_len.try_into().unwrap_or(u32::MAX),
-                    });
-                    file_state
+                    use crate::cdc::backend_wrapper::CdcBackendWrapper;
+                    use crate::cdc::pointer::CdcPointer;
+                    // use crate::cdc::pointer::TryParseResult;
+                    use crate::cdc::utils::write_file_maybe_from_pointer;
+
+                    if let Some(cdc_wrapper) = self.store.backend_impl::<CdcBackendWrapper>()
+                        && file
+                            .contents
+                            .iter()
+                            .any(|add| CdcPointer::is_cdc_pointer(add))
+                    {
+                        let base_name = disk_path
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("file");
+                        let parent = disk_path.parent().unwrap();
+
+                        // 模型：
+                        // - add[0] 分支 1；add[1] 分支 2；add[2] 分支 3；
+                        // - remove[0] 分支 1 和 分支 2 的共同祖先；remove[1] 分支 2 和 分支 3
+                        //   的共同祖先；
+                        for (i, add) in file.contents.adds().enumerate() {
+                            let version_path =
+                                parent.join(format!("conflict-{}-{}", i + 1, base_name));
+                            let mut file = File::create(&version_path).map_err(|err| {
+                                CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to create file {}: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                }
+                            })?;
+                            let mut cursor = std::io::Cursor::new(add);
+                            write_file_maybe_from_pointer(cdc_wrapper, &mut file, &mut cursor)
+                                .await
+                                .map_err(|err| CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to write file {} from CDC: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                })?;
+                        }
+
+                        let mut base_conetents = HashMap::new();
+                        for (i, remove) in file.contents.removes().enumerate() {
+                            let base_contents = base_conetents.entry(remove).or_insert(Vec::new());
+                            base_contents.push(i + 1);
+                        }
+
+                        for (base_contents, versions) in base_conetents {
+                            let mut version = String::new();
+                            let mut last = 0;
+                            for i in versions {
+                                if i == last {
+                                    version.push_str(&format!("-{}", i + 1));
+                                } else {
+                                    version.push_str(&format!("-{}-{}", i, i + 1));
+                                }
+                                last = i + 1;
+                            }
+
+                            let version_path =
+                                parent.join(format!("base{}-{}", version, base_name));
+                            let mut file = File::create(&version_path).map_err(|err| {
+                                CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to create file {}: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                }
+                            })?;
+                            let mut cursor = std::io::Cursor::new(base_contents);
+                            write_file_maybe_from_pointer(cdc_wrapper, &mut file, &mut cursor)
+                                .await
+                                .map_err(|err| CheckoutError::Other {
+                                    message: format!(
+                                        "Failed to write file {} from CDC: {:?}",
+                                        version_path.display(),
+                                        err
+                                    ),
+                                    err: err.into(),
+                                })?;
+                        }
+
+                        FileState::placeholder()
+                    } else {
+                        let conflict_marker_len =
+                            choose_materialized_conflict_marker_len(&file.contents);
+                        let options = ConflictMaterializeOptions {
+                            marker_style: self.conflict_marker_style,
+                            marker_len: Some(conflict_marker_len),
+                            merge: self.store.merge_options().clone(),
+                        };
+                        let exec_bit = ExecBit::new_from_repo(
+                            file.executable.unwrap_or(false),
+                            self.exec_policy,
+                            get_prev_exec,
+                        );
+                        let contents = materialize_merge_result_to_bytes(
+                            &file.contents,
+                            &file.labels,
+                            &options,
+                        );
+                        let mut file_state =
+                            self.write_conflict(&disk_path, &contents, exec_bit).await?;
+                        file_state.materialized_conflict_data = Some(MaterializedConflictData {
+                            conflict_marker_len: conflict_marker_len.try_into().unwrap_or(u32::MAX),
+                        });
+                        file_state
+                    }
                 }
                 MaterializedTreeValue::OtherConflict { id, labels } => {
                     // Unless all terms are regular files, we can't do much

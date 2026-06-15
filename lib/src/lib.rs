@@ -16,7 +16,7 @@
 
 #![warn(missing_docs)]
 #![deny(unused_must_use)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 // Needed so that proc macros can be used inside jj_lib and by external crates
 // that depend on it.
@@ -24,6 +24,8 @@
 // - https://github.com/rust-lang/rust/issues/54647#issuecomment-432015102
 // - https://github.com/rust-lang/rust/issues/54363
 extern crate self as jj_lib;
+
+pub mod cdc;
 
 #[macro_use]
 pub mod content_hash;

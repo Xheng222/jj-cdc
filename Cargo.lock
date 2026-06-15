@@ -1006,6 +1006,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fastcdc"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
+
+[[package]]
 name = "faster-hex"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2479,6 +2485,7 @@ dependencies = [
  "pollster",
  "proptest",
  "proptest-state-machine",
+ "prost",
  "rand 0.10.1",
  "rand_chacha 0.10.0",
  "ratatui",
@@ -2523,6 +2530,7 @@ dependencies = [
  "either",
  "etcetera",
  "eyre",
+ "fastcdc",
  "futures 0.3.32",
  "gix",
  "gix-ignore",
@@ -2535,6 +2543,8 @@ dependencies = [
  "itertools 0.14.0",
  "jj-lib-proc-macros",
  "maplit",
+ "memmap2",
+ "mincdc",
  "nix 0.31.3",
  "num_cpus",
  "once_cell",
@@ -2857,6 +2867,12 @@ checksum = "2d4139bb28d14ad1facf21d5eb8825051b326e172d216b39f6d31df53cc97862"
 dependencies = [
  "libmimalloc-sys",
 ]
+
+[[package]]
+name = "mincdc"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d2923e26fcf6c3699531d13e141a4c18bb0852d5614da154805dcf6348fbf21"
 
 [[package]]
 name = "minimal-lexical"
@@ -4247,7 +4263,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
